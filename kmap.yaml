@@ -12,6 +12,14 @@ suppress_keydown:
   - Caps
   - Alt
 
+# Single-tap layout switches.
+tap_layout_switches:
+  RAlt:
+    layout: us
+    variant: dvorak
+  LAlt:
+    layout: ru
+
 # Full mapping set.
 mappings:
   # Alt layer (symbols)
