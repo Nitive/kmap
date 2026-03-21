@@ -22,6 +22,8 @@ install: build
 
 restart: build
 	install -m 755 ./bin/kmap $(USER_BIN_DIR)/kmap
+	install -m 644 ./services/kmap.service $(USER_SYSTEMD_DIR)/kmap.service
+	systemctl --user daemon-reload
 	systemctl --user restart kmap.service
 
 uninstall:
