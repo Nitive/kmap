@@ -19,8 +19,8 @@ This plan outlines the steps to modernize `kmap`, improve its testability, and s
     - [x] Consolidate `normalizeToken` and `trimQuotes` in `pkg/config/config.go`.
     - [x] Clean up `ParseKeyName` logic to remove redundant branches.
     - [x] Removed unused error return from `resolveDevicePaths`.
-- [ ] **Refine CLI Commands**: (Note: skipped for now due to environment constraints)
-    - [ ] Evaluate using a library like `cobra` or `urfave/cli` to simplify subcommand handling and help generation, given the project's openness to dependencies.
+- [x] **Refine CLI Commands**:
+    - [x] Refactored CLI to use a command registry for better maintainability and usage generation.
 
 ## Phase 3: Architecture & Testability (Dependency Injection)
 - [x] **Define Core Interfaces**: Create interfaces for `InputDevice`, `Mapper`, and `OutputDevice` to decouple the daemon from hardware.

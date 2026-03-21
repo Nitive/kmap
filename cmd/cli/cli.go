@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"time"
 
 	"keyboard/pkg/daemon"
@@ -18,38 +19,53 @@ var (
 	generateFn       = xcompose.GenerateFile
 )
 
+type cliCommand struct {
+	Name        string
+	Description string
+	Run         func(args []string) error
+}
+
+var commands = map[string]cliCommand{
+	"start": {
+		Name:        "start",
+		Description: "Run the remapping daemon",
+		Run:         runStartCommand,
+	},
+	"setup-keymap": {
+		Name:        "setup-keymap",
+		Description: "Interactively capture keyboard layout",
+		Run:         func(args []string) error { return runSetupKeymapFn(args) },
+	},
+	"generate-xcompose": {
+		Name:        "generate-xcompose",
+		Description: "Generate XCompose rules for mapped symbols",
+		Run:         runGenerateXComposeCommand,
+	},
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		printTopLevelUsage(os.Stderr)
 		return errors.New("missing command")
 	}
 
-	switch args[0] {
-	case "start":
-		err := runStartCommand(args[1:])
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	case "setup-keymap":
-		err := runSetupKeymapFn(args[1:])
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	case "generate-xcompose":
-		err := runGenerateXComposeCommand(args[1:])
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	case "help", "-h", "--help":
+	cmdName := args[0]
+	if cmdName == "help" || cmdName == "-h" || cmdName == "--help" {
 		printTopLevelUsage(os.Stdout)
 		return nil
-	default:
-		printTopLevelUsage(os.Stderr)
-		return fmt.Errorf("unknown command %q", args[0])
 	}
+
+	cmd, ok := commands[cmdName]
+	if !ok {
+		printTopLevelUsage(os.Stderr)
+		return fmt.Errorf("unknown command %q", cmdName)
+	}
+
+	err := cmd.Run(args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return err
 }
 
 func runStart(devicePath string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
@@ -123,10 +139,20 @@ func runGenerateXComposeCommand(args []string) error {
 }
 
 func printTopLevelUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  kmap start [flags]")
-	fmt.Fprintln(w, "  kmap setup-keymap [flags]")
-	fmt.Fprintln(w, "  kmap generate-xcompose --output <path> [--config <path>]")
+	fmt.Fprintln(w, "Usage: kmap <command> [flags]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Commands:")
+
+	keys := make([]string, 0, len(commands))
+	for k := range commands {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		cmd := commands[k]
+		fmt.Fprintf(w, "  %-18s %s\n", cmd.Name, cmd.Description)
+	}
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Run `kmap <command> -h` for command-specific flags.")
 }
