@@ -30,13 +30,23 @@ type CompiledMapping struct {
 	KeySeq    []uint16
 }
 
+type ShortcutLayoutSpec struct {
+	Layout  string
+	Variant string
+	Rules   string
+	Model   string
+	Options string
+}
+
 type Runtime struct {
 	SuppressAlt  bool
 	SuppressCaps bool
 	Devices      []string
 
-	AltMappings  map[uint16]CompiledMapping
-	CapsMappings map[uint16]CompiledMapping
+	AltMappings      map[uint16]CompiledMapping
+	CapsMappings     map[uint16]CompiledMapping
+	ShortcutLayout   *ShortcutLayoutSpec
+	ShortcutMappings map[uint16]uint16
 }
 
 type rawConfig struct {
@@ -44,6 +54,7 @@ type rawConfig struct {
 	suppressKeys    []string
 	devices         []string
 	mappings        map[string]rawAction
+	shortcutLayout  *ShortcutLayoutSpec
 }
 
 type rawAction struct {
@@ -98,6 +109,15 @@ type yamlConfig struct {
 	SuppressKeydown *stringOrList         `yaml:"suppress_keydown"`
 	Devices         *stringOrList         `yaml:"devices"`
 	Mappings        map[string]yamlAction `yaml:"mappings"`
+	ShortcutLayout  *yamlShortcutLayout   `yaml:"shortcut_layout"`
+}
+
+type yamlShortcutLayout struct {
+	Layout  string `yaml:"layout"`
+	Variant string `yaml:"variant"`
+	Rules   string `yaml:"rules"`
+	Model   string `yaml:"model"`
+	Options string `yaml:"options"`
 }
 
 var keyCodeByName = map[string]uint16{
@@ -195,10 +215,11 @@ var keyCodeByName = map[string]uint16{
 
 func DefaultRuntime() Runtime {
 	return Runtime{
-		SuppressAlt:  true,
-		SuppressCaps: true,
-		AltMappings:  make(map[uint16]CompiledMapping),
-		CapsMappings: make(map[uint16]CompiledMapping),
+		SuppressAlt:      true,
+		SuppressCaps:     true,
+		AltMappings:      make(map[uint16]CompiledMapping),
+		CapsMappings:     make(map[uint16]CompiledMapping),
+		ShortcutMappings: make(map[uint16]uint16),
 	}
 }
 
@@ -268,6 +289,15 @@ func parseRawConfigYAML(raw string) (rawConfig, error) {
 	if decoded.Devices != nil {
 		out.devices = append(out.devices, []string(*decoded.Devices)...)
 	}
+	if decoded.ShortcutLayout != nil {
+		out.shortcutLayout = &ShortcutLayoutSpec{
+			Layout:  trimASCIIWhitespace(decoded.ShortcutLayout.Layout),
+			Variant: trimASCIIWhitespace(decoded.ShortcutLayout.Variant),
+			Rules:   trimASCIIWhitespace(decoded.ShortcutLayout.Rules),
+			Model:   trimASCIIWhitespace(decoded.ShortcutLayout.Model),
+			Options: trimASCIIWhitespace(decoded.ShortcutLayout.Options),
+		}
+	}
 
 	for binding, action := range decoded.Mappings {
 		out.mappings[binding] = rawAction{
@@ -302,6 +332,18 @@ func applyRawConfig(cfg *Runtime, raw rawConfig) error {
 			return err
 		}
 		cfg.Devices = devices
+	}
+	if raw.shortcutLayout != nil {
+		if raw.shortcutLayout.Layout == "" {
+			return errors.New("shortcut_layout.layout must not be empty")
+		}
+		cfg.ShortcutLayout = &ShortcutLayoutSpec{
+			Layout:  raw.shortcutLayout.Layout,
+			Variant: raw.shortcutLayout.Variant,
+			Rules:   raw.shortcutLayout.Rules,
+			Model:   raw.shortcutLayout.Model,
+			Options: raw.shortcutLayout.Options,
+		}
 	}
 
 	for binding, action := range raw.mappings {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,15 +10,21 @@ import (
 	"sort"
 	"time"
 
+	"keyboard/pkg/config"
 	"keyboard/pkg/daemon"
+	"keyboard/pkg/daemon/shortcut"
 	"keyboard/pkg/xcompose"
 )
 
 var (
-	runStartFn       = runStart
-	runSetupKeymapFn = runSetupKeymap
-	generateFn       = xcompose.GenerateFile
-	daemonStartFn    = daemon.Start
+	runStartFn         = runStart
+	runSetupKeymapFn   = runSetupKeymap
+	generateFn         = xcompose.GenerateFile
+	daemonStartFn      = daemon.Start
+	loadRuntimeFn      = config.LoadRuntime
+	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
+		return shortcut.ValidateShortcutLayout(ctx, target)
+	}
 )
 
 type cliCommand struct {
@@ -41,6 +48,11 @@ var commands = map[string]cliCommand{
 		Name:        "generate-xcompose",
 		Description: "Generate XCompose rules for mapped symbols",
 		Run:         runGenerateXComposeCommand,
+	},
+	"validate-config": {
+		Name:        "validate-config",
+		Description: "Validate config parsing and shortcut layout loading",
+		Run:         runValidateConfigCommand,
 	},
 }
 
@@ -137,6 +149,68 @@ func runGenerateXComposeCommand(args []string) error {
 	}
 
 	return generateFn(*configPath, resolvedOutput)
+}
+
+func runValidateConfig(configPath string, out io.Writer) error {
+	if _, err := os.Stat(configPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("config file %s does not exist", configPath)
+		}
+		return fmt.Errorf("stat config %s: %w", configPath, err)
+	}
+
+	cfg, err := loadRuntimeFn(configPath)
+	if err != nil {
+		return err
+	}
+
+	if cfg.ShortcutLayout == nil {
+		_, _ = fmt.Fprintf(out, "config OK: %s\n", configPath)
+		return nil
+	}
+
+	info, err := shortcutValidateFn(context.Background(), *cfg.ShortcutLayout)
+	if err != nil {
+		return fmt.Errorf("shortcut_layout validation failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(
+		out,
+		"config OK: %s (shortcut current=%s target=%s target_index=%d)\n",
+		configPath,
+		formatLayout(info.Current.Layout, info.Current.Variant),
+		formatLayout(info.Target.Layout, info.Target.Variant),
+		info.TargetIndex,
+	)
+	return nil
+}
+
+func runValidateConfigCommand(args []string) error {
+	fs := flag.NewFlagSet("kmap validate-config", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	configPath := fs.String("config", "kmap.yaml", "YAML config file path")
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprintf(fs.Output(), "Usage: kmap validate-config [--config <path>]\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", fs.Args())
+	}
+
+	return runValidateConfig(*configPath, os.Stdout)
+}
+
+func formatLayout(layout string, variant string) string {
+	if variant == "" {
+		return layout
+	}
+	return fmt.Sprintf("%s(%s)", layout, variant)
 }
 
 func printTopLevelUsage(w io.Writer) {

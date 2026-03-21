@@ -100,7 +100,7 @@ func loadRepoRuntimeConfig(t *testing.T) config.Runtime {
 func newConfiguredRemapper(t *testing.T, out keyEmitter) *remapper {
 	t.Helper()
 	cfg := loadRepoRuntimeConfig(t)
-	return newRemapperWithConfig(out, 0, false, cfg)
+	return newRemapperWithConfig(out, 0, false, nil, cfg)
 }
 
 func sortedSymbolKeys(cfg config.Runtime) []uint16 {
@@ -422,7 +422,7 @@ func TestCleanupReleasesActiveRemappedKeys(t *testing.T) {
 		Kind:      config.MappingRemap,
 		RemapCode: config.KeyBackspace,
 	}
-	r := newRemapperWithConfig(out, 0, false, cfg)
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
 
 	runSequence(t, r, []emittedKey{
 		evt(config.KeyCapsLock, 1),
@@ -444,7 +444,7 @@ func TestAltPassthroughWhenSuppressionDisabled(t *testing.T) {
 	out := &fakeEmitter{}
 	cfg := config.DefaultRuntime()
 	cfg.SuppressAlt = false
-	r := newRemapperWithConfig(out, 0, false, cfg)
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
 
 	runSequence(t, r, []emittedKey{
 		evt(config.KeyLeftAlt, 1),
@@ -458,6 +458,126 @@ func TestAltPassthroughWhenSuppressionDisabled(t *testing.T) {
 		evt(config.KeyJ, 1),
 		evt(config.KeyJ, 0),
 		evt(config.KeyLeftAlt, 0),
+	}
+	assertEventsEqual(t, out.events, want)
+}
+
+func TestShortcutRemapWithCtrl(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutMappings[config.KeyDot] = config.KeyV
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyDot, 1),
+		evt(config.KeyDot, 0),
+		evt(config.KeyLeftCtrl, 0),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyV, 1),
+		evt(config.KeyV, 0),
+		evt(config.KeyLeftCtrl, 0),
+	}
+	assertEventsEqual(t, out.events, want)
+}
+
+func TestShortcutRemapWithCtrlAltPassthrough(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutMappings[config.KeyDot] = config.KeyV
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyDot, 1),
+		evt(config.KeyDot, 0),
+		evt(config.KeyLeftAlt, 0),
+		evt(config.KeyLeftCtrl, 0),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyV, 1),
+		evt(config.KeyV, 0),
+		evt(config.KeyLeftAlt, 0),
+		evt(config.KeyLeftCtrl, 0),
+	}
+	assertEventsEqual(t, out.events, want)
+}
+
+func TestShortcutRemapDoesNotApplyWithShiftOnly(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutMappings[config.KeyDot] = config.KeyV
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyDot, 1),
+		evt(config.KeyDot, 0),
+		evt(config.KeyLeftShift, 0),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyDot, 1),
+		evt(config.KeyDot, 0),
+		evt(config.KeyLeftShift, 0),
+	}
+	assertEventsEqual(t, out.events, want)
+}
+
+func TestShortcutRemapAppliesWithCtrlShift(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutMappings[config.KeyDot] = config.KeyV
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyDot, 1),
+		evt(config.KeyDot, 0),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftCtrl, 0),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyV, 1),
+		evt(config.KeyV, 0),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftCtrl, 0),
+	}
+	assertEventsEqual(t, out.events, want)
+}
+
+func TestShortcutRemapUsesDynamicMappings(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutMappings[config.KeyDot] = config.KeyV
+	r := newRemapperWithConfig(out, 0, false, func() map[uint16]uint16 {
+		return map[uint16]uint16{config.KeyDot: config.KeyC}
+	}, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyDot, 1),
+		evt(config.KeyDot, 0),
+		evt(config.KeyLeftCtrl, 0),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyC, 1),
+		evt(config.KeyC, 0),
+		evt(config.KeyLeftCtrl, 0),
 	}
 	assertEventsEqual(t, out.events, want)
 }

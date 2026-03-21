@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"os"
 	"syscall"
@@ -9,17 +10,20 @@ import (
 
 	"keyboard/pkg/config"
 	"keyboard/pkg/daemon/event"
+	"keyboard/pkg/daemon/shortcut"
 )
 
 type mockInputDevice struct {
 	path            string
 	closed          bool
 	capsLockEnabled bool
+	grabbed         bool
 }
 
 func (m *mockInputDevice) Path() string                   { return m.path }
 func (m *mockInputDevice) Close() error                   { m.closed = true; return nil }
 func (m *mockInputDevice) CapsLockEnabled() (bool, error) { return m.capsLockEnabled, nil }
+func (m *mockInputDevice) Grab(enable bool) error         { m.grabbed = enable; return nil }
 
 type mockOutputDevice struct {
 	closed bool
@@ -29,8 +33,31 @@ func (m *mockOutputDevice) EmitKey(code uint16, value int32) error        { retu
 func (m *mockOutputDevice) TapKey(code uint16, delay time.Duration) error { return nil }
 func (m *mockOutputDevice) Close() error                                  { m.closed = true; return nil }
 
+type fakeShortcutSwitcher struct {
+	wrapped bool
+	closed  bool
+}
+
+func (f *fakeShortcutSwitcher) Wrap(in <-chan event.KeyEvent) (<-chan event.KeyEvent, <-chan error) {
+	f.wrapped = true
+	return in, closedErrChan()
+}
+
+func (f *fakeShortcutSwitcher) Close(ctx context.Context) error {
+	_ = ctx
+	f.closed = true
+	return nil
+}
+
+func useTempRuntimeDir(t *testing.T) {
+	t.Helper()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+}
+
 func TestOrchestrator(t *testing.T) {
 	t.Run("successful startup and shutdown on signal", func(t *testing.T) {
+		useTempRuntimeDir(t)
+
 		inDev := &mockInputDevice{path: "/dev/input/test"}
 		outKB := &mockOutputDevice{}
 		sigCh := make(chan os.Signal, 1)
@@ -75,6 +102,8 @@ func TestOrchestrator(t *testing.T) {
 	})
 
 	t.Run("fails when input factory fails", func(t *testing.T) {
+		useTempRuntimeDir(t)
+
 		sigCh := make(chan os.Signal, 1)
 		orc := &orchestrator{
 			devicePaths: []string{"/dev/input/test"},
@@ -91,6 +120,8 @@ func TestOrchestrator(t *testing.T) {
 	})
 
 	t.Run("shuts down when module returns error", func(t *testing.T) {
+		useTempRuntimeDir(t)
+
 		inDev := &mockInputDevice{path: "/dev/input/test"}
 		outKB := &mockOutputDevice{}
 		sigCh := make(chan os.Signal, 1)
@@ -233,6 +264,8 @@ func TestReleaseCapsOnStart(t *testing.T) {
 }
 
 func TestOrchestratorReturnsWhenModulesFinishCleanly(t *testing.T) {
+	useTempRuntimeDir(t)
+
 	inDev := &mockInputDevice{path: "/dev/input/test"}
 	outKB := &mockOutputDevice{}
 
@@ -261,6 +294,8 @@ func TestOrchestratorReturnsWhenModulesFinishCleanly(t *testing.T) {
 }
 
 func TestOrchestratorClosesInputWhenOutputFactoryFails(t *testing.T) {
+	useTempRuntimeDir(t)
+
 	inDev := &mockInputDevice{path: "/dev/input/test"}
 
 	orc := &orchestrator{
@@ -301,5 +336,77 @@ func TestClosePipelinesClosesAllDevices(t *testing.T) {
 	}
 	if !firstOut.closed || !secondOut.closed {
 		t.Fatalf("not all output devices were closed")
+	}
+}
+
+func TestLoadShortcutSwitcher(t *testing.T) {
+	t.Run("noop without shortcut layout", func(t *testing.T) {
+		orc := &orchestrator{cfg: config.DefaultRuntime()}
+		if err := orc.loadShortcutSwitcher(); err != nil {
+			t.Fatalf("loadShortcutSwitcher: %v", err)
+		}
+		if orc.shortcutWrap != nil {
+			t.Fatalf("expected no shortcut switcher")
+		}
+	})
+
+	t.Run("loads shortcut switcher from factory", func(t *testing.T) {
+		cfg := config.DefaultRuntime()
+		cfg.ShortcutLayout = &config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"}
+		switcher := &fakeShortcutSwitcher{}
+
+		orc := &orchestrator{
+			cfg: cfg,
+			shortcutMake: func(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
+				_ = ctx
+				_ = verbose
+				if target.Layout != "us" || target.Variant != "dvorak" {
+					t.Fatalf("unexpected target layout: %#v", target)
+				}
+				return switcher, shortcut.ValidationInfo{
+					Current:     shortcut.LayoutInfo{Layout: "ru", Description: "ru"},
+					Target:      shortcut.LayoutInfo{Layout: "us", Variant: "dvorak", Description: "us(dvorak)"},
+					TargetIndex: 0,
+				}, nil
+			},
+		}
+
+		if err := orc.loadShortcutSwitcher(); err != nil {
+			t.Fatalf("loadShortcutSwitcher: %v", err)
+		}
+		if orc.shortcutWrap != switcher {
+			t.Fatalf("unexpected shortcut switcher: %#v", orc.shortcutWrap)
+		}
+	})
+
+	t.Run("surfaces loader errors", func(t *testing.T) {
+		cfg := config.DefaultRuntime()
+		cfg.ShortcutLayout = &config.ShortcutLayoutSpec{Layout: "us"}
+
+		orc := &orchestrator{
+			cfg: cfg,
+			shortcutMake: func(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
+				_ = ctx
+				_ = verbose
+				return nil, shortcut.ValidationInfo{}, errors.New("dbus failed")
+			},
+		}
+
+		err := orc.loadShortcutSwitcher()
+		if err == nil {
+			t.Fatalf("expected loader error")
+		}
+		if err.Error() != "load shortcut layout switch: dbus failed" {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestCleanupClosesShortcutSwitcher(t *testing.T) {
+	switcher := &fakeShortcutSwitcher{}
+	orc := &orchestrator{shortcutWrap: switcher}
+	orc.cleanup()
+	if !switcher.closed {
+		t.Fatalf("expected shortcut switcher to be closed")
 	}
 }

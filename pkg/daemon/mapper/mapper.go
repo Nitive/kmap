@@ -11,8 +11,9 @@ import (
 )
 
 type Options struct {
-	ComposeDelay time.Duration
-	Verbose      bool
+	ComposeDelay     time.Duration
+	Verbose          bool
+	ShortcutMappings func() map[uint16]uint16
 }
 
 type keyEmitter interface {
@@ -53,6 +54,8 @@ type remapper struct {
 	suppressCaps bool
 	altMappings  map[uint16]config.CompiledMapping
 	capsMappings map[uint16]config.CompiledMapping
+	shortcutMaps map[uint16]uint16
+	shortcutFn   func() map[uint16]uint16
 
 	altActive  bool
 	altCode    uint16
@@ -80,7 +83,7 @@ var composeDigitKey = map[rune]uint16{
 func Start(cfg config.Runtime, in <-chan event.KeyEvent, opts Options) (<-chan event.KeyEvent, <-chan error) {
 	outCh := make(chan event.KeyEvent, 128)
 	errCh := make(chan error, 1)
-	r := newRemapperWithConfig(&channelEmitter{out: outCh}, opts.ComposeDelay, opts.Verbose, cfg)
+	r := newRemapperWithConfig(&channelEmitter{out: outCh}, opts.ComposeDelay, opts.Verbose, opts.ShortcutMappings, cfg)
 
 	go func() {
 		defer close(outCh)
@@ -101,7 +104,7 @@ func Start(cfg config.Runtime, in <-chan event.KeyEvent, opts Options) (<-chan e
 	return outCh, errCh
 }
 
-func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose bool, cfg config.Runtime) *remapper {
+func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose bool, shortcutFn func() map[uint16]uint16, cfg config.Runtime) *remapper {
 	altMappings := make(map[uint16]config.CompiledMapping, len(cfg.AltMappings))
 	for code, mapping := range cfg.AltMappings {
 		altMappings[code] = config.CloneCompiledMapping(mapping)
@@ -109,6 +112,10 @@ func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose b
 	capsMappings := make(map[uint16]config.CompiledMapping, len(cfg.CapsMappings))
 	for code, mapping := range cfg.CapsMappings {
 		capsMappings[code] = config.CloneCompiledMapping(mapping)
+	}
+	shortcutMaps := make(map[uint16]uint16, len(cfg.ShortcutMappings))
+	for srcCode, dstCode := range cfg.ShortcutMappings {
+		shortcutMaps[srcCode] = dstCode
 	}
 
 	return &remapper{
@@ -119,6 +126,8 @@ func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose b
 		suppressCaps:   cfg.SuppressCaps,
 		altMappings:    altMappings,
 		capsMappings:   capsMappings,
+		shortcutMaps:   shortcutMaps,
+		shortcutFn:     shortcutFn,
 		activeRemapped: make(map[uint16]uint16),
 		swallowed:      make(map[uint16]bool),
 		modDown:        make(map[uint16]bool),
@@ -185,6 +194,10 @@ func isCaps(code uint16) bool {
 	return code == config.KeyCapsLock
 }
 
+func isShift(code uint16) bool {
+	return code == config.KeyLeftShift || code == config.KeyRightShift
+}
+
 func isNonAltModifier(code uint16) bool {
 	switch code {
 	case config.KeyLeftShift, config.KeyRightShift, config.KeyLeftCtrl, config.KeyRightCtrl, config.KeyLeftMeta, config.KeyRightMeta:
@@ -194,13 +207,33 @@ func isNonAltModifier(code uint16) bool {
 	}
 }
 
+func isShortcutModifier(code uint16) bool {
+	return isAlt(code) || isNonAltModifier(code)
+}
+
 func (r *remapper) anyNonAltModifierDown() bool {
-	for _, down := range r.modDown {
+	for code, down := range r.modDown {
+		if isAlt(code) {
+			continue
+		}
 		if down {
 			return true
 		}
 	}
 	return false
+}
+
+func (r *remapper) shouldApplyShortcutRemap() bool {
+	hasNonShiftModifier := false
+	for code, down := range r.modDown {
+		if !down {
+			continue
+		}
+		if isShortcutModifier(code) && !isShift(code) {
+			hasNonShiftModifier = true
+		}
+	}
+	return hasNonShiftModifier
 }
 
 func (r *remapper) emitAltDownIfNeeded() error {
@@ -344,7 +377,7 @@ func (r *remapper) handlePendingAltKey(code uint16, value int32) error {
 	if err := r.emitAltDownIfNeeded(); err != nil {
 		return err
 	}
-	return r.out.emitKey(code, value)
+	return r.emitShortcutAwareKey(code, value)
 }
 
 func (r *remapper) emitChord(mods []uint16, targetCode uint16) error {
@@ -389,15 +422,33 @@ func (r *remapper) handleCapsKey(value int32) error {
 func (r *remapper) handleCapsLayerKey(code uint16, value int32) error {
 	mapping, ok := r.capsMappings[code]
 	if !ok {
-		return r.out.emitKey(code, value)
+		return r.emitShortcutAwareKey(code, value)
 	}
 
 	r.logf("caps key %d mapped via config kind=%d", code, mapping.Kind)
 	return r.handleMappedAction(code, value, mapping, false)
 }
 
+func (r *remapper) emitShortcutAwareKey(code uint16, value int32) error {
+	if r.shouldApplyShortcutRemap() {
+		shortcutMaps := r.shortcutMaps
+		if r.shortcutFn != nil {
+			if dynamicMaps := r.shortcutFn(); dynamicMaps != nil {
+				shortcutMaps = dynamicMaps
+			}
+		}
+		if remapCode, ok := shortcutMaps[code]; ok {
+			if value == 1 {
+				r.activeRemapped[code] = remapCode
+			}
+			return r.out.emitKey(remapCode, value)
+		}
+	}
+	return r.out.emitKey(code, value)
+}
+
 func (r *remapper) handleKey(code uint16, value int32) error {
-	if isNonAltModifier(code) {
+	if isShortcutModifier(code) {
 		switch value {
 		case 1:
 			r.modDown[code] = true
@@ -436,5 +487,5 @@ func (r *remapper) handleKey(code uint16, value int32) error {
 		return r.handlePendingAltKey(code, value)
 	}
 
-	return r.out.emitKey(code, value)
+	return r.emitShortcutAwareKey(code, value)
 }

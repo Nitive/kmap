@@ -13,6 +13,7 @@ The project is designed to make symbol and layer mappings deterministic across k
 1. Run a remapping daemon (`kmap start`)
 2. Capture a keyboard layout map interactively (`kmap setup-keymap`)
 3. Generate deterministic XCompose entries for mapped Unicode symbols (`kmap generate-xcompose`)
+4. Validate config and shortcut layout loading (`kmap validate-config`)
 
 ## How It Works
 
@@ -45,6 +46,7 @@ Config supports:
 
 - `suppress_keydown`: layer keys whose down event is delayed (e.g. `Alt`, `Caps`)
 - `devices`: one or more `/dev/input/...` device paths
+- `shortcut_layout`: canonical layout used for modifier-based shortcuts
 - `mappings` with per-layer bindings, for example:
   - `to_symbol: ←`
   - `to_keys: [Left]`
@@ -52,6 +54,26 @@ Config supports:
   - `passthrough: true`
 
 A full example is in [`kmap.yaml`](./kmap.yaml).
+
+### Automatic Shortcut Layout Switching
+
+If `shortcut_layout` is configured, `kmap` validates that the target layout exists in KDE, then temporarily switches KDE to that layout while shortcut modifiers are held. This makes app shortcuts such as `Ctrl+Shift+V` behave consistently even when the typing layout is different (for example, Russian).
+
+Example:
+
+```yaml
+shortcut_layout:
+  layout: us
+  variant: dvorak
+```
+
+With that enabled, `kmap` keeps normal typing on the active KDE layout, but switches to Dvorak for shortcuts and restores the previous layout when the shortcut finishes.
+
+Current constraints:
+
+- KDE-only: uses `org.kde.keyboard` via `qdbus6`
+- active layout changes are detected at runtime, but restart `kmap` after changing KDE layout configuration
+- shortcut handling is global across all keyboards because KDE layout state is global
 
 ### Unicode / Compose Strategy
 
@@ -73,14 +95,32 @@ In short: `kmap` gives you stable key behavior across layouts, apps, and composi
 
 ```bash
 kmap start [--config kmap.yaml] [--device /dev/input/...]
-kmap setup-keymap [--device /dev/input/...] [--output keyboard-layout.json]
+kmap setup-keymap --layout us(dvorak) > layouts/us-dvorak.json
 kmap generate-xcompose --output ~/.XCompose [--config kmap.yaml]
+kmap validate-config [--config kmap.yaml]
 ```
 
 Run command help:
 
 ```bash
 kmap <command> -h
+```
+
+### Layout Capture
+
+`kmap setup-keymap` now captures the bytes your terminal receives for each logical key, which makes the output layout-dependent and suitable for comparing `us(dvorak)`, `ru`, and other KDE layouts.
+
+- Prompts are written to stderr; JSON goes to stdout by default.
+- Press Enter to arm a capture, then press the requested key.
+- For non-Enter keys, pressing Enter after arming skips that key.
+- `Ctrl+C` or `SIGTERM` aborts immediately.
+- If the daemon is running, `setup-keymap` asks it to temporarily release grabbed devices and restores them on exit.
+
+Example:
+
+```bash
+kmap setup-keymap --layout us(dvorak) > layouts/us-dvorak.json
+kmap setup-keymap --layout ru > layouts/ru.json
 ```
 
 ## Build / Run

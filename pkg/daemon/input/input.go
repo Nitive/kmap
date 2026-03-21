@@ -158,7 +158,11 @@ func (d *Device) Grab(enable bool) error {
 	if enable {
 		value = 1
 	}
-	return d.ioctl.Ioctl(d.fd, eviocgrab, uintptr(unsafe.Pointer(&value)))
+	if err := d.ioctl.Ioctl(d.fd, eviocgrab, uintptr(unsafe.Pointer(&value))); err != nil {
+		return err
+	}
+	d.grabbed = enable
+	return nil
 }
 
 func (d *Device) readLoop(eventsCh chan<- event.KeyEvent, errCh chan<- error) {

@@ -57,6 +57,9 @@ func TestApplyRawConfigCompilesMappings(t *testing.T) {
 devices:
   - /dev/input/by-path/platform-i8042-serio-0-event-kbd
 suppress_keydown: [Caps, Alt]
+shortcut_layout:
+  layout: us
+  variant: dvorak
 mappings:
   Alt-Tab:
     passthrough: true
@@ -79,6 +82,12 @@ mappings:
 	}
 	if len(cfg.Devices) != 1 || cfg.Devices[0] != "/dev/input/by-path/platform-i8042-serio-0-event-kbd" {
 		t.Fatalf("devices mismatch: %#v", cfg.Devices)
+	}
+	if cfg.ShortcutLayout == nil {
+		t.Fatalf("expected shortcut layout to be configured")
+	}
+	if cfg.ShortcutLayout.Layout != "us" || cfg.ShortcutLayout.Variant != "dvorak" {
+		t.Fatalf("shortcut layout mismatch: %#v", cfg.ShortcutLayout)
 	}
 
 	altTab := cfg.AltMappings[KeyTab]
@@ -109,6 +118,45 @@ mappings:
 	got := raw.mappings["Caps-H"].toKeys
 	if len(got) != 1 || got[0] != "Backspace" {
 		t.Fatalf("unexpected to_keys value: %#v", got)
+	}
+}
+
+func TestParseRawConfigYAMLShortcutLayout(t *testing.T) {
+	raw, err := parseRawConfigYAML(`
+shortcut_layout:
+  layout: us
+  variant: dvorak
+  rules: evdev
+  model: pc105
+  options: compose:sclk
+`)
+	if err != nil {
+		t.Fatalf("parseRawConfigYAML: %v", err)
+	}
+	if raw.shortcutLayout == nil {
+		t.Fatalf("expected shortcut layout")
+	}
+	if raw.shortcutLayout.Layout != "us" || raw.shortcutLayout.Variant != "dvorak" {
+		t.Fatalf("unexpected shortcut layout: %#v", raw.shortcutLayout)
+	}
+	if raw.shortcutLayout.Options != "compose:sclk" {
+		t.Fatalf("unexpected shortcut options: %#v", raw.shortcutLayout)
+	}
+}
+
+func TestApplyRawConfigRejectsBlankShortcutLayout(t *testing.T) {
+	raw, err := parseRawConfigYAML("shortcut_layout:\n  variant: dvorak\n")
+	if err != nil {
+		t.Fatalf("parseRawConfigYAML: %v", err)
+	}
+
+	cfg := DefaultRuntime()
+	err = applyRawConfig(&cfg, raw)
+	if err == nil {
+		t.Fatalf("expected shortcut layout validation error")
+	}
+	if !strings.Contains(err.Error(), "shortcut_layout.layout") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

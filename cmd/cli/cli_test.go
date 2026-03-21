@@ -1,11 +1,18 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"keyboard/pkg/config"
 	"keyboard/pkg/daemon"
+	"keyboard/pkg/daemon/shortcut"
 )
 
 func TestRunStartForwardsOptions(t *testing.T) {
@@ -251,6 +258,131 @@ func TestRunGenerateXComposeSupportsPositionalOutput(t *testing.T) {
 	}
 	if gotOutput != "/tmp/generated.XCompose" {
 		t.Fatalf("output mismatch: %q", gotOutput)
+	}
+}
+
+func TestRunValidateConfigWithoutShortcutLayout(t *testing.T) {
+	origLoad := loadRuntimeFn
+	origShortcut := shortcutValidateFn
+	defer func() {
+		loadRuntimeFn = origLoad
+		shortcutValidateFn = origShortcut
+	}()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("mappings: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	loadRuntimeFn = func(path string) (config.Runtime, error) {
+		if path != configPath {
+			t.Fatalf("unexpected config path: %q", path)
+		}
+		return config.DefaultRuntime(), nil
+	}
+	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
+		t.Fatalf("shortcutValidateFn should not be called without shortcut layout")
+		return shortcut.ValidationInfo{}, nil
+	}
+
+	var out bytes.Buffer
+	if err := runValidateConfig(configPath, &out); err != nil {
+		t.Fatalf("runValidateConfig: %v", err)
+	}
+	if got := out.String(); got != "config OK: "+configPath+"\n" {
+		t.Fatalf("unexpected output: %q", got)
+	}
+}
+
+func TestRunValidateConfigWithShortcutLayout(t *testing.T) {
+	origLoad := loadRuntimeFn
+	origShortcut := shortcutValidateFn
+	defer func() {
+		loadRuntimeFn = origLoad
+		shortcutValidateFn = origShortcut
+	}()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("shortcut_layout:\n  layout: us\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	loadRuntimeFn = func(path string) (config.Runtime, error) {
+		cfg := config.DefaultRuntime()
+		cfg.ShortcutLayout = &config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"}
+		return cfg, nil
+	}
+	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
+		if target.Layout != "us" || target.Variant != "dvorak" {
+			t.Fatalf("unexpected target: %#v", target)
+		}
+		return shortcut.ValidationInfo{
+			Current:     shortcut.LayoutInfo{Layout: "us"},
+			Target:      shortcut.LayoutInfo{Layout: "us", Variant: "dvorak"},
+			TargetIndex: 0,
+		}, nil
+	}
+
+	var out bytes.Buffer
+	if err := runValidateConfig(configPath, &out); err != nil {
+		t.Fatalf("runValidateConfig: %v", err)
+	}
+	got := out.String()
+	want := "config OK: " + configPath + " (shortcut current=us target=us(dvorak) target_index=0)\n"
+	if got != want {
+		t.Fatalf("unexpected output: got=%q want=%q", got, want)
+	}
+}
+
+func TestRunValidateConfigWrapsShortcutErrors(t *testing.T) {
+	origLoad := loadRuntimeFn
+	origShortcut := shortcutValidateFn
+	defer func() {
+		loadRuntimeFn = origLoad
+		shortcutValidateFn = origShortcut
+	}()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("shortcut_layout:\n  layout: us\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	loadRuntimeFn = func(path string) (config.Runtime, error) {
+		cfg := config.DefaultRuntime()
+		cfg.ShortcutLayout = &config.ShortcutLayoutSpec{Layout: "us"}
+		return cfg, nil
+	}
+	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
+		return shortcut.ValidationInfo{}, errors.New("qdbus failed")
+	}
+
+	err := runValidateConfig(configPath, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "shortcut_layout validation failed: qdbus failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunValidateConfigRejectsMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.yaml")
+	err := runValidateConfig(path, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("expected missing file error")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunValidateConfigCommandRejectsExtraArgs(t *testing.T) {
+	err := runValidateConfigCommand([]string{"one"})
+	if err == nil {
+		t.Fatalf("expected positional argument error")
+	}
+	if !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
