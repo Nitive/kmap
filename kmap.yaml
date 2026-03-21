@@ -1,7 +1,11 @@
 # Input devices to listen on.
 devices:
-  - /dev/input/by-path/platform-i8042-serio-0-event-kbd
+  # - /dev/input/by-path/platform-i8042-serio-0-event-kbd
   - /dev/input/by-id/usb-04d9_USB-HID_Keyboard-event-kbd
+
+shortcut_layout:
+  layout: us
+  variant: dvorak
 
 # Which layer keys should delay their keydown until the next key event.
 suppress_keydown:
