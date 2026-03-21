@@ -5,10 +5,10 @@ This plan outlines the steps to modernize `kmap`, improve its testability, and s
 ## Phase 1: Core Reliability & Standard Standards
 - [x] **Blocking Input Reads**: Update `pkg/daemon/input/input.go` to use blocking reads (removing `O_NONBLOCK` and the `EAGAIN` retry loop).
 - [x] **Fix Goroutine Leaks**: Update `cmd/cli/setup_keymap.go` to ensure the signal-handling goroutine terminates when key capture is complete.
-- [ ] **Adopt `x/sys/unix`**: (Note: skipped `go get` for now due to environment constraints)
-    - [ ] Replace manual `ioctl` bit-macro definitions with `unix` package helpers.
-    - [ ] Replace manual keycode constants in `pkg/config/keycodes.go` with `unix.KEY_*` constants.
-    - [ ] Verify that all existing mappings match `unix` constants (Manual check: ESC=1, 1=2, A=30 confirmed).
+- [x] **Adopt `x/sys/unix`**:
+    - [x] Replace manual `ioctl` bit-macro definitions with `unix` package helpers.
+    - [x] Replace manual keycode constants in `pkg/config/keycodes.go` with `unix.KEY_*` constants.
+    - [x] Verify that all existing mappings match `unix` constants (Manual check: ESC=1, 1=2, A=30 confirmed).
 
 ## Phase 2: Simplification & Deployment
 - [x] **Remove Shell Wrapper**: Delete `kmap-start.sh`.

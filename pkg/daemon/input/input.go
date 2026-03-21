@@ -8,51 +8,20 @@ import (
 	"os"
 	"sync"
 	"syscall"
-	"time"
 	"unsafe"
 
-	"keyboard/pkg/daemon/event"
-)
+	"golang.org/x/sys/unix"
 
-const (
-	evKey = 0x01
+	"keyboard/pkg/daemon/event"
 )
 
 const (
 	ledCapsLock = 1
 )
 
-// ioctl definitions from asm-generic/ioctl.h
-const (
-	iocNRBits   = 8
-	iocTypeBits = 8
-	iocSizeBits = 14
-	iocDirBits  = 2
-
-	iocNRShift   = 0
-	iocTypeShift = iocNRShift + iocNRBits
-	iocSizeShift = iocTypeShift + iocTypeBits
-	iocDirShift  = iocSizeShift + iocSizeBits
-
-	iocWrite = 1
-	iocRead  = 2
-)
-
-func ioc(dir, typ, nr, size uintptr) uintptr {
-	return (dir << iocDirShift) | (typ << iocTypeShift) | (nr << iocNRShift) | (size << iocSizeShift)
-}
-
-func iow(typ, nr, size uintptr) uintptr {
-	return ioc(iocWrite, typ, nr, size)
-}
-
-func ior(typ, nr, size uintptr) uintptr {
-	return ioc(iocRead, typ, nr, size)
-}
-
 var (
-	eviocgrab = iow(uintptr('E'), 0x90, 4)
-	eviocgled = ior(uintptr('E'), 0x19, 1)
+	eviocgrab = unix.EVIOCGRAB
+	eviocgled = unix.IOR('E', 0x19, 1)
 )
 
 // RawEvent mirrors Linux input_event.
@@ -76,7 +45,7 @@ type ioctlCaller interface {
 type realIoctl struct{}
 
 func (realIoctl) Ioctl(fd int, req uintptr, arg uintptr) error {
-	return ioctl(fd, req, arg)
+	return unix.IoctlSetPointerInt(fd, uint(req), unsafe.Pointer(arg))
 }
 
 type Device struct {
@@ -178,7 +147,7 @@ func (d *Device) readLoop(eventsCh chan<- event.KeyEvent, errCh chan<- error) {
 			errCh <- fmt.Errorf("read input event %s: %w", d.path, err)
 			return
 		}
-		if ev.Type != evKey {
+		if ev.Type != unix.EV_KEY {
 			continue
 		}
 		eventsCh <- event.KeyEvent{Code: ev.Code, Value: ev.Value}
@@ -197,7 +166,7 @@ func WaitForNextKeyPress(r io.Reader) (uint16, error) {
 		if err != nil {
 			return 0, err
 		}
-		if ev.Type == evKey && ev.Value == 1 {
+		if ev.Type == unix.EV_KEY && ev.Value == 1 {
 			return ev.Code, nil
 		}
 	}
@@ -208,17 +177,5 @@ func Grab(fd int, enable bool) error {
 	if enable {
 		value = 1
 	}
-	return ioctlSetInt(fd, eviocgrab, value)
-}
-
-func ioctl(fd int, req uintptr, arg uintptr) error {
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), req, arg)
-	if errno != 0 {
-		return errno
-	}
-	return nil
-}
-
-func ioctlSetInt(fd int, req uintptr, value int32) error {
-	return ioctl(fd, req, uintptr(unsafe.Pointer(&value)))
+	return unix.IoctlSetPointerInt(fd, uint(eviocgrab), unsafe.Pointer(&value))
 }

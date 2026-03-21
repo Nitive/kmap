@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"keyboard/pkg/daemon/event"
 )
 
@@ -15,51 +17,11 @@ const (
 	uinputPath = "/dev/uinput"
 )
 
-const (
-	evSyn = 0x00
-	evKey = 0x01
-)
-
-const (
-	synReport = 0x00
-)
-
-const (
-	busUSB = 0x03
-)
-
-// ioctl definitions from asm-generic/ioctl.h
-const (
-	iocNRBits   = 8
-	iocTypeBits = 8
-	iocSizeBits = 14
-	iocDirBits  = 2
-
-	iocNRShift   = 0
-	iocTypeShift = iocNRShift + iocNRBits
-	iocSizeShift = iocTypeShift + iocTypeBits
-	iocDirShift  = iocSizeShift + iocSizeBits
-
-	iocWrite = 1
-)
-
-func ioc(dir, typ, nr, size uintptr) uintptr {
-	return (dir << iocDirShift) | (typ << iocTypeShift) | (nr << iocNRShift) | (size << iocSizeShift)
-}
-
-func iocNone(typ, nr uintptr) uintptr {
-	return ioc(0, typ, nr, 0)
-}
-
-func iow(typ, nr, size uintptr) uintptr {
-	return ioc(iocWrite, typ, nr, size)
-}
-
 var (
-	uiSetEvBit   = iow(uintptr('U'), 100, 4)
-	uiSetKeyBit  = iow(uintptr('U'), 101, 4)
-	uiDevCreate  = iocNone(uintptr('U'), 1)
-	uiDevDestroy = iocNone(uintptr('U'), 2)
+	uiSetEvBit   = unix.UI_SET_EVBIT
+	uiSetKeyBit  = unix.UI_SET_KEYBIT
+	uiDevCreate  = unix.UI_DEV_CREATE
+	uiDevDestroy = unix.UI_DEV_DESTROY
 )
 
 type inputEvent struct {
@@ -78,13 +40,13 @@ type inputID struct {
 }
 
 type uinputUserDev struct {
-	Name         [80]byte
+	Name         [unix.UINPUT_MAX_NAME_SIZE]byte
 	ID           inputID
 	FFEffectsMax uint32
-	AbsMax       [64]int32
-	AbsMin       [64]int32
-	AbsFuzz      [64]int32
-	AbsFlat      [64]int32
+	AbsMax       [unix.ABS_CNT]int32
+	AbsMin       [unix.ABS_CNT]int32
+	AbsFuzz      [unix.ABS_CNT]int32
+	AbsFlat      [unix.ABS_CNT]int32
 }
 
 type ioctlCaller interface {
@@ -94,7 +56,7 @@ type ioctlCaller interface {
 type realIoctl struct{}
 
 func (realIoctl) Ioctl(fd int, req uintptr, arg uintptr) error {
-	return ioctl(fd, req, arg)
+	return unix.IoctlSetInt(fd, uint(req), int(arg))
 }
 
 type Keyboard struct {
@@ -113,11 +75,11 @@ func CreateVirtualKeyboard(name string) (*Keyboard, error) {
 }
 
 func createVirtualKeyboardWithFile(file io.WriteCloser, fd int, name string, ic ioctlCaller) (*Keyboard, error) {
-	if err := ic.Ioctl(fd, uiSetEvBit, uintptr(evKey)); err != nil {
+	if err := ic.Ioctl(fd, uiSetEvBit, uintptr(unix.EV_KEY)); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("UI_SET_EVBIT EV_KEY: %w", err)
 	}
-	if err := ic.Ioctl(fd, uiSetEvBit, uintptr(evSyn)); err != nil {
+	if err := ic.Ioctl(fd, uiSetEvBit, uintptr(unix.EV_SYN)); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("UI_SET_EVBIT EV_SYN: %w", err)
 	}
@@ -132,7 +94,7 @@ func createVirtualKeyboardWithFile(file io.WriteCloser, fd int, name string, ic 
 	var dev uinputUserDev
 	copy(dev.Name[:], []byte(name))
 	dev.ID = inputID{
-		Bustype: busUSB,
+		Bustype: unix.BUS_USB,
 		Vendor:  0x1,
 		Product: 0x1,
 		Version: 1,
@@ -143,7 +105,7 @@ func createVirtualKeyboardWithFile(file io.WriteCloser, fd int, name string, ic 
 		return nil, fmt.Errorf("write uinput device: %w", err)
 	}
 
-	if err := ic.Ioctl(fd, uiDevCreate, 0); err != nil {
+	if err := unix.IoctlSetInt(fd, uint(uiDevCreate), 0); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("UI_DEV_CREATE: %w", err)
 	}
@@ -159,7 +121,7 @@ func (k *Keyboard) Close() error {
 		return nil
 	}
 
-	_ = k.ioctl.Ioctl(k.fd, uiDevDestroy, 0)
+	_ = unix.IoctlSetInt(k.fd, uint(uiDevDestroy), 0)
 	return k.f.Close()
 }
 
@@ -169,11 +131,11 @@ func (k *Keyboard) emitEvent(evType uint16, code uint16, value int32) error {
 }
 
 func (k *Keyboard) sync() error {
-	return k.emitEvent(evSyn, synReport, 0)
+	return k.emitEvent(unix.EV_SYN, unix.SYN_REPORT, 0)
 }
 
 func (k *Keyboard) EmitKey(code uint16, value int32) error {
-	if err := k.emitEvent(evKey, code, value); err != nil {
+	if err := k.emitEvent(unix.EV_KEY, code, value); err != nil {
 		return err
 	}
 	return k.sync()
@@ -207,12 +169,4 @@ func Run(kb *Keyboard, in <-chan event.KeyEvent) <-chan error {
 		}
 	}()
 	return errCh
-}
-
-func ioctl(fd int, req uintptr, arg uintptr) error {
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), req, arg)
-	if errno != 0 {
-		return errno
-	}
-	return nil
 }
