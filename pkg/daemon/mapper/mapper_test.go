@@ -280,6 +280,95 @@ func TestAltSymbolWithShiftBecomesPassthrough(t *testing.T) {
 	assertEventsEqual(t, out.events, want)
 }
 
+func TestExactAltShiftSymbolMappingMasksModifiers(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.ComboMappings[config.InputBinding{
+		Modifiers: config.ModifierAlt | config.ModifierShift,
+		KeyCode:   config.KeyE,
+	}] = config.CompiledMapping{
+		Kind:   config.MappingSymbol,
+		Symbol: '€',
+	}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyE, 1),
+		evt(config.KeyE, 0),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftAlt, 0),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftAlt, 0),
+	}
+	want = append(want, composeExpectedEvents(t, ComposeSequenceForRune('€'))...)
+	want = append(want,
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftAlt, 0),
+	)
+
+	assertEventsEqual(t, out.events, want)
+}
+
+func TestExactAllModifierMappingIsSupported(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.SuppressAlt = false
+	cfg.ComboMappings[config.InputBinding{
+		Modifiers: config.ModifierCtrl | config.ModifierAlt | config.ModifierShift | config.ModifierMeta,
+		KeyCode:   config.KeyK,
+	}] = config.CompiledMapping{
+		Kind:   config.MappingSymbol,
+		Symbol: '§',
+	}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyLeftMeta, 1),
+		evt(config.KeyK, 1),
+		evt(config.KeyK, 0),
+		evt(config.KeyLeftMeta, 0),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftAlt, 0),
+		evt(config.KeyLeftCtrl, 0),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyLeftMeta, 1),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftAlt, 0),
+		evt(config.KeyLeftCtrl, 0),
+		evt(config.KeyLeftMeta, 0),
+	}
+	want = append(want, composeExpectedEvents(t, ComposeSequenceForRune('§'))...)
+	want = append(want,
+		evt(config.KeyLeftMeta, 1),
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyLeftMeta, 0),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftAlt, 0),
+		evt(config.KeyLeftCtrl, 0),
+	)
+
+	assertEventsEqual(t, out.events, want)
+}
+
 func TestCapsArrowAndBackspaceRemaps(t *testing.T) {
 	out := &fakeEmitter{}
 	r := newConfiguredRemapper(t, out)

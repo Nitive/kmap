@@ -58,8 +58,8 @@ mappings:
     to_symbol: →
   Alt-Semicolon:
     to_symbol: ":"
-  # Alt-Shift-Semicolon:
-  #   to_symbol: ";"
+  Alt-Shift-Semicolon:
+    to_symbol: ";"
   Alt-Q:
     to_symbol: "?"
   Alt-K:
@@ -80,26 +80,26 @@ mappings:
     to_symbol: ₽
   Alt-I:
     to_symbol: $
-  # Alt-Shift-E:
-  #   to_symbol: €
+  Alt-Shift-E:
+    to_symbol: €
 
   # German
   Alt-A:
     to_symbol: ä
-  # Alt-Shift-A:
-  #   to_symbol: Ä
+  Alt-Shift-A:
+    to_symbol: Ä
   Alt-O:
     to_symbol: ö
-  # Alt-Shift-R:
-  #   to_symbol: Ö
+  Alt-Shift-O:
+    to_symbol: Ö
   Alt-U:
     to_symbol: ü
-  # Alt-Shift-U:
-  #   to_symbol: Ü
+  Alt-Shift-U:
+    to_symbol: Ü
   Alt-S:
     to_symbol: ß
-  # Alt-Shift-S:
-  #   to_symbol: ẞ
+  Alt-Shift-S:
+    to_symbol: ẞ
 
   # Caps layer (navigation + app shortcuts)
   Caps-Comma:

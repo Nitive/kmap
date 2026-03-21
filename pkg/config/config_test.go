@@ -88,8 +88,12 @@ mappings:
     passthrough: true
   Alt-J:
     to_symbol: ←
+  Alt-Shift-E:
+    to_symbol: €
   Caps-H:
     to_keys: [Backspace]
+  Ctrl-Alt-Shift-Meta-K:
+    to_chord: Ctrl-Shift-A
 `)
 	if err != nil {
 		t.Fatalf("parseRawConfigYAML: %v", err)
@@ -135,6 +139,29 @@ mappings:
 	capsH := cfg.CapsMappings[KeyJ]
 	if capsH.Kind != MappingRemap || capsH.RemapCode != KeyBackspace {
 		t.Fatalf("Caps-H mapping mismatch: %#v", capsH)
+	}
+
+	parser, err := newKeyNameParser(cfg.ShortcutLayout)
+	if err != nil {
+		t.Fatalf("newKeyNameParser: %v", err)
+	}
+
+	altShiftBinding, err := parseBindingKeyWithParser("Alt-Shift-E", parser)
+	if err != nil {
+		t.Fatalf("parseBindingKeyWithParser Alt-Shift-E: %v", err)
+	}
+	altShiftE, ok := cfg.ComboMappings[altShiftBinding]
+	if !ok || altShiftE.Kind != MappingSymbol || altShiftE.Symbol != '€' {
+		t.Fatalf("Alt-Shift-E mapping mismatch: %#v ok=%v", altShiftE, ok)
+	}
+
+	fullComboBinding, err := parseBindingKeyWithParser("Ctrl-Alt-Shift-Meta-K", parser)
+	if err != nil {
+		t.Fatalf("parseBindingKeyWithParser Ctrl-Alt-Shift-Meta-K: %v", err)
+	}
+	fullCombo, ok := cfg.ComboMappings[fullComboBinding]
+	if !ok || fullCombo.Kind != MappingChord {
+		t.Fatalf("Ctrl-Alt-Shift-Meta-K mapping mismatch: %#v ok=%v", fullCombo, ok)
 	}
 }
 
@@ -419,6 +446,17 @@ func TestRepositoryKMapConfigLoads(t *testing.T) {
 	if m := cfg.CapsMappings[KeyH]; m.Kind != MappingRemap || m.RemapCode != KeyBackspace {
 		t.Fatalf("Caps-H should map to Backspace, got %#v", m)
 	}
+	parser, err := newKeyNameParser(cfg.ShortcutLayout)
+	if err != nil {
+		t.Fatalf("newKeyNameParser: %v", err)
+	}
+	binding, err := parseBindingKeyWithParser("Alt-Shift-Semicolon", parser)
+	if err != nil {
+		t.Fatalf("parseBindingKeyWithParser Alt-Shift-Semicolon: %v", err)
+	}
+	if m := cfg.ComboMappings[binding]; m.Kind != MappingSymbol || m.Symbol != ';' {
+		t.Fatalf("Alt-Shift-Semicolon should map to symbol ;, got %#v", m)
+	}
 }
 
 func TestStringOrListUnmarshalVariants(t *testing.T) {
@@ -549,6 +587,21 @@ func TestCompileActionSupportsChordAndKeySequence(t *testing.T) {
 	}
 	if len(chord.ChordMods) != 2 || chord.ChordMods[0] != KeyLeftCtrl || chord.ChordMods[1] != KeyLeftShift {
 		t.Fatalf("unexpected ChordMods: %#v", chord.ChordMods)
+	}
+}
+
+func TestParseBindingKeyWithMultipleModifiers(t *testing.T) {
+	parser := keyNameParser{}
+
+	binding, err := parseBindingKeyWithParser("Ctrl-Alt-Shift-Meta-K", parser)
+	if err != nil {
+		t.Fatalf("parseBindingKeyWithParser: %v", err)
+	}
+	if binding.Modifiers != ModifierCtrl|ModifierAlt|ModifierShift|ModifierMeta {
+		t.Fatalf("unexpected modifiers: %#v", binding)
+	}
+	if binding.KeyCode != KeyK {
+		t.Fatalf("unexpected key code: %#v", binding)
 	}
 }
 

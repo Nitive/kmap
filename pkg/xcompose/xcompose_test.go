@@ -68,13 +68,16 @@ func TestCollectMappedSymbolsSortsAndDeduplicates(t *testing.T) {
 		CapsMappings: map[uint16]config.CompiledMapping{
 			config.KeyC: {Kind: config.MappingSymbol, Symbol: 'z'},
 		},
+		ComboMappings: map[config.InputBinding]config.CompiledMapping{
+			{Modifiers: config.ModifierAlt | config.ModifierShift, KeyCode: config.KeyD}: {Kind: config.MappingSymbol, Symbol: 'b'},
+		},
 	}
 
 	got, err := collectMappedSymbols(cfg)
 	if err != nil {
 		t.Fatalf("collectMappedSymbols: %v", err)
 	}
-	if len(got) != 2 || got[0] != 'a' || got[1] != 'z' {
+	if len(got) != 3 || got[0] != 'a' || got[1] != 'b' || got[2] != 'z' {
 		t.Fatalf("unexpected symbols: %#v", got)
 	}
 }

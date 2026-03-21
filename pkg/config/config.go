@@ -30,6 +30,21 @@ type CompiledMapping struct {
 	KeySeq    []uint16
 }
 
+type ModifierMask uint16
+
+const (
+	ModifierCtrl ModifierMask = 1 << iota
+	ModifierShift
+	ModifierAlt
+	ModifierMeta
+	ModifierCaps
+)
+
+type InputBinding struct {
+	Modifiers ModifierMask
+	KeyCode   uint16
+}
+
 type ShortcutLayoutSpec struct {
 	Layout  string
 	Variant string
@@ -58,6 +73,7 @@ type Runtime struct {
 
 	AltMappings       map[uint16]CompiledMapping
 	CapsMappings      map[uint16]CompiledMapping
+	ComboMappings     map[InputBinding]CompiledMapping
 	ShortcutLayout    *ShortcutLayoutSpec
 	TapLayoutSwitches map[uint16]LayoutSwitchTapAction
 	ShortcutMappings  map[uint16]uint16
@@ -241,6 +257,7 @@ func DefaultRuntime() Runtime {
 		SuppressCaps:      true,
 		AltMappings:       make(map[uint16]CompiledMapping),
 		CapsMappings:      make(map[uint16]CompiledMapping),
+		ComboMappings:     make(map[InputBinding]CompiledMapping),
 		TapLayoutSwitches: make(map[uint16]LayoutSwitchTapAction),
 		ShortcutMappings:  make(map[uint16]uint16),
 	}
@@ -403,7 +420,7 @@ func applyRawConfig(cfg *Runtime, raw rawConfig) error {
 	}
 
 	for binding, action := range raw.mappings {
-		layer, keyCode, err := parseBindingKeyWithParser(binding, keyParser)
+		inputBinding, err := parseBindingKeyWithParser(binding, keyParser)
 		if err != nil {
 			return err
 		}
@@ -412,13 +429,13 @@ func applyRawConfig(cfg *Runtime, raw rawConfig) error {
 			return fmt.Errorf("mapping %q: %w", binding, err)
 		}
 
-		switch layer {
-		case "ALT":
-			cfg.AltMappings[keyCode] = compiled
-		case "CAPS":
-			cfg.CapsMappings[keyCode] = compiled
+		switch inputBinding.Modifiers {
+		case ModifierAlt:
+			cfg.AltMappings[inputBinding.KeyCode] = compiled
+		case ModifierCaps:
+			cfg.CapsMappings[inputBinding.KeyCode] = compiled
 		default:
-			return fmt.Errorf("mapping %q: unsupported layer %q", binding, layer)
+			cfg.ComboMappings[inputBinding] = compiled
 		}
 	}
 
@@ -527,22 +544,29 @@ func symbolFromString(s string) (rune, error) {
 	return r, nil
 }
 
-func parseBindingKeyWithParser(binding string, parser keyNameParser) (string, uint16, error) {
+func parseBindingKeyWithParser(binding string, parser keyNameParser) (InputBinding, error) {
 	parts := strings.Split(binding, "-")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("binding %q must be in <Layer>-<Key> form", binding)
+	if len(parts) < 2 {
+		return InputBinding{}, fmt.Errorf("binding %q must be in <Mod>-...-<Key> form", binding)
 	}
 
-	layer := normalizeToken(parts[0])
-	if layer != "ALT" && layer != "CAPS" {
-		return "", 0, fmt.Errorf("binding %q uses unsupported layer %q", binding, parts[0])
+	var modifiers ModifierMask
+	for _, part := range parts[:len(parts)-1] {
+		modifier, err := parseBindingModifier(part)
+		if err != nil {
+			return InputBinding{}, fmt.Errorf("binding %q: %w", binding, err)
+		}
+		if modifiers&modifier != 0 {
+			return InputBinding{}, fmt.Errorf("binding %q: duplicate modifier %q", binding, part)
+		}
+		modifiers |= modifier
 	}
 
-	keyCode, err := parser.Parse(parts[1])
+	keyCode, err := parser.Parse(parts[len(parts)-1])
 	if err != nil {
-		return "", 0, fmt.Errorf("binding %q: %w", binding, err)
+		return InputBinding{}, fmt.Errorf("binding %q: %w", binding, err)
 	}
-	return layer, keyCode, nil
+	return InputBinding{Modifiers: modifiers, KeyCode: keyCode}, nil
 }
 
 func parseChordSpecWithParser(spec string, parser keyNameParser) ([]uint16, uint16, error) {
@@ -579,6 +603,40 @@ func parseModifierName(name string) (uint16, error) {
 		return KeyLeftMeta, nil
 	default:
 		return 0, fmt.Errorf("unsupported modifier %q", name)
+	}
+}
+
+func parseBindingModifier(name string) (ModifierMask, error) {
+	switch normalizeToken(name) {
+	case "CTRL", "CONTROL", "LCTRL", "RCTRL":
+		return ModifierCtrl, nil
+	case "SHIFT", "LSHIFT", "RSHIFT":
+		return ModifierShift, nil
+	case "ALT", "LALT", "RALT":
+		return ModifierAlt, nil
+	case "META", "SUPER", "WIN", "LMETA", "RMETA":
+		return ModifierMeta, nil
+	case "CAPS", "CAPSLOCK":
+		return ModifierCaps, nil
+	default:
+		return 0, fmt.Errorf("unsupported modifier %q", name)
+	}
+}
+
+func ModifierMaskForKeyCode(code uint16) ModifierMask {
+	switch code {
+	case KeyLeftCtrl, KeyRightCtrl:
+		return ModifierCtrl
+	case KeyLeftShift, KeyRightShift:
+		return ModifierShift
+	case KeyLeftAlt, KeyRightAlt:
+		return ModifierAlt
+	case KeyLeftMeta, KeyRightMeta:
+		return ModifierMeta
+	case KeyCapsLock:
+		return ModifierCaps
+	default:
+		return 0
 	}
 }
 

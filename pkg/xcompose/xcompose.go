@@ -63,6 +63,15 @@ func collectMappedSymbols(cfg config.Runtime) ([]rune, error) {
 	if err := addMap(cfg.CapsMappings); err != nil {
 		return nil, err
 	}
+	for _, mapping := range cfg.ComboMappings {
+		if mapping.Kind != config.MappingSymbol {
+			continue
+		}
+		if mapping.Symbol == 0 {
+			return nil, errors.New("symbol mapping has empty symbol")
+		}
+		set[mapping.Symbol] = struct{}{}
+	}
 
 	symbols := make([]rune, 0, len(set))
 	for r := range set {

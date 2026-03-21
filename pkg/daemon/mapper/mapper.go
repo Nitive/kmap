@@ -26,6 +26,11 @@ type channelEmitter struct {
 	out chan<- event.KeyEvent
 }
 
+type activeRemap struct {
+	code             uint16
+	restoreModifiers []uint16
+}
+
 func (e *channelEmitter) emitKey(code uint16, value int32) error {
 	e.out <- event.KeyEvent{Kind: event.KindKey, Code: code, Value: value}
 	return nil
@@ -63,6 +68,7 @@ type remapper struct {
 	suppressCaps      bool
 	altMappings       map[uint16]config.CompiledMapping
 	capsMappings      map[uint16]config.CompiledMapping
+	comboMappings     map[config.InputBinding]config.CompiledMapping
 	tapLayoutSwitches map[uint16]config.LayoutSwitchTapAction
 	shortcutMaps      map[uint16]uint16
 	shortcutFn        func() map[uint16]uint16
@@ -74,9 +80,10 @@ type remapper struct {
 	capsActive bool
 	capsUsed   bool
 
-	activeRemapped map[uint16]uint16
-	swallowed      map[uint16]bool
-	modDown        map[uint16]bool
+	activeRemapped  map[uint16]activeRemap
+	swallowed       map[uint16]bool
+	maskedModifiers map[uint16]int
+	modDown         map[uint16]bool
 }
 
 var composeDigitKey = map[rune]uint16{
@@ -125,6 +132,10 @@ func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose b
 	for code, mapping := range cfg.CapsMappings {
 		capsMappings[code] = config.CloneCompiledMapping(mapping)
 	}
+	comboMappings := make(map[config.InputBinding]config.CompiledMapping, len(cfg.ComboMappings))
+	for binding, mapping := range cfg.ComboMappings {
+		comboMappings[binding] = config.CloneCompiledMapping(mapping)
+	}
 	tapLayoutSwitches := make(map[uint16]config.LayoutSwitchTapAction, len(cfg.TapLayoutSwitches))
 	for code, action := range cfg.TapLayoutSwitches {
 		tapLayoutSwitches[code] = action
@@ -142,11 +153,13 @@ func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose b
 		suppressCaps:      cfg.SuppressCaps,
 		altMappings:       altMappings,
 		capsMappings:      capsMappings,
+		comboMappings:     comboMappings,
 		tapLayoutSwitches: tapLayoutSwitches,
 		shortcutMaps:      shortcutMaps,
 		shortcutFn:        shortcutFn,
-		activeRemapped:    make(map[uint16]uint16),
+		activeRemapped:    make(map[uint16]activeRemap),
 		swallowed:         make(map[uint16]bool),
+		maskedModifiers:   make(map[uint16]int),
 		modDown:           make(map[uint16]bool),
 	}
 }
@@ -194,8 +207,11 @@ func (r *remapper) cleanup() error {
 			firstErr = err
 		}
 	}
-	for srcCode, remapCode := range r.activeRemapped {
-		if err := r.out.emitKey(remapCode, 0); err != nil && firstErr == nil {
+	for srcCode, remap := range r.activeRemapped {
+		if err := r.out.emitKey(remap.code, 0); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if err := r.unmaskModifierCodes(remap.restoreModifiers); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		delete(r.activeRemapped, srcCode)
@@ -226,6 +242,10 @@ func isNonAltModifier(code uint16) bool {
 
 func isShortcutModifier(code uint16) bool {
 	return isAlt(code) || isNonAltModifier(code)
+}
+
+func isBindingModifier(code uint16) bool {
+	return config.ModifierMaskForKeyCode(code) != 0
 }
 
 func (r *remapper) anyNonAltModifierDown() bool {
@@ -374,7 +394,7 @@ func (r *remapper) handleMappedAction(code uint16, value int32, mapping config.C
 
 	case config.MappingRemap:
 		if value == 1 {
-			r.activeRemapped[code] = mapping.RemapCode
+			r.activeRemapped[code] = activeRemap{code: mapping.RemapCode}
 		}
 		if value == 0 {
 			delete(r.activeRemapped, code)
@@ -435,6 +455,151 @@ func (r *remapper) emitChord(mods []uint16, targetCode uint16) error {
 	return nil
 }
 
+func (r *remapper) currentBindingModifiers() config.ModifierMask {
+	var modifiers config.ModifierMask
+	for code, down := range r.modDown {
+		if !down {
+			continue
+		}
+		modifiers |= config.ModifierMaskForKeyCode(code)
+	}
+	if r.capsActive {
+		modifiers |= config.ModifierCaps
+	}
+	return modifiers
+}
+
+func (r *remapper) comboMappingForKey(code uint16) (config.CompiledMapping, bool) {
+	mapping, ok := r.comboMappings[config.InputBinding{
+		Modifiers: r.currentBindingModifiers(),
+		KeyCode:   code,
+	}]
+	return mapping, ok
+}
+
+func (r *remapper) modifierPhysicallyDown(code uint16) bool {
+	if isCaps(code) {
+		return r.capsActive
+	}
+	return r.modDown[code]
+}
+
+func (r *remapper) modifierOutputActive(code uint16) bool {
+	switch {
+	case isCaps(code):
+		return !r.suppressCaps && r.capsActive
+	case isAlt(code):
+		return r.modDown[code] && (!r.suppressAlt || r.altEmitted)
+	default:
+		return r.modDown[code]
+	}
+}
+
+func (r *remapper) currentEmittedModifierCodes() []uint16 {
+	codes := []uint16{
+		config.KeyLeftMeta,
+		config.KeyRightMeta,
+		config.KeyLeftCtrl,
+		config.KeyRightCtrl,
+		config.KeyLeftAlt,
+		config.KeyRightAlt,
+		config.KeyLeftShift,
+		config.KeyRightShift,
+		config.KeyCapsLock,
+	}
+
+	emitted := make([]uint16, 0, len(codes))
+	for _, code := range codes {
+		if r.modifierOutputActive(code) {
+			emitted = append(emitted, code)
+		}
+	}
+	return emitted
+}
+
+func (r *remapper) maskEmittedModifiers() ([]uint16, error) {
+	codes := r.currentEmittedModifierCodes()
+	for i := len(codes) - 1; i >= 0; i-- {
+		code := codes[i]
+		if r.maskedModifiers[code] == 0 {
+			if err := r.out.emitKey(code, 0); err != nil {
+				return nil, err
+			}
+		}
+		r.maskedModifiers[code]++
+	}
+	return codes, nil
+}
+
+func (r *remapper) unmaskModifierCodes(codes []uint16) error {
+	for _, code := range codes {
+		count := r.maskedModifiers[code]
+		if count == 0 {
+			continue
+		}
+		if count == 1 {
+			delete(r.maskedModifiers, code)
+			if r.modifierPhysicallyDown(code) {
+				if err := r.out.emitKey(code, 1); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		r.maskedModifiers[code] = count - 1
+	}
+	return nil
+}
+
+func (r *remapper) handleComboMapping(code uint16, value int32, mapping config.CompiledMapping) error {
+	switch mapping.Kind {
+	case config.MappingPassthrough:
+		if r.altActive && !r.altEmitted {
+			if err := r.emitAltDownIfNeeded(); err != nil {
+				return err
+			}
+		}
+		return r.out.emitKey(code, value)
+
+	case config.MappingRemap:
+		if value != 1 {
+			return nil
+		}
+		restoreModifiers, err := r.maskEmittedModifiers()
+		if err != nil {
+			return err
+		}
+		if err := r.out.emitKey(mapping.RemapCode, 1); err != nil {
+			_ = r.unmaskModifierCodes(restoreModifiers)
+			return err
+		}
+		r.activeRemapped[code] = activeRemap{
+			code:             mapping.RemapCode,
+			restoreModifiers: restoreModifiers,
+		}
+		return nil
+
+	case config.MappingSymbol, config.MappingChord, config.MappingKeySeq:
+		if value != 1 {
+			return nil
+		}
+		restoreModifiers, err := r.maskEmittedModifiers()
+		if err != nil {
+			return err
+		}
+		r.swallowed[code] = true
+		actionErr := r.handleMappedAction(code, value, mapping, false)
+		restoreErr := r.unmaskModifierCodes(restoreModifiers)
+		if actionErr != nil {
+			return actionErr
+		}
+		return restoreErr
+
+	default:
+		return fmt.Errorf("unsupported mapping kind %d", mapping.Kind)
+	}
+}
+
 func (r *remapper) handleCapsKey(value int32) error {
 	if !r.suppressCaps {
 		r.capsActive = false
@@ -482,7 +647,7 @@ func (r *remapper) emitShortcutAwareKey(code uint16, value int32) error {
 			}
 		}
 		if remapCode, ok := shortcutMaps[code]; ok {
-			r.activeRemapped[code] = remapCode
+			r.activeRemapped[code] = activeRemap{code: remapCode}
 			return r.out.emitKey(remapCode, value)
 		}
 	}
@@ -499,11 +664,34 @@ func (r *remapper) handleKey(code uint16, value int32) error {
 		}
 	}
 
-	if remapCode, ok := r.activeRemapped[code]; ok {
-		if value == 0 {
-			delete(r.activeRemapped, code)
+	if r.maskedModifiers[code] > 0 && isBindingModifier(code) {
+		if isAlt(code) && value == 0 {
+			r.altActive = false
+			r.altEmitted = false
+			r.altUsed = false
 		}
-		return r.out.emitKey(remapCode, value)
+		if isCaps(code) && value == 0 {
+			r.capsActive = false
+			r.capsUsed = false
+		}
+		return nil
+	}
+
+	if remap, ok := r.activeRemapped[code]; ok {
+		if value == 0 {
+			if err := r.out.emitKey(remap.code, 0); err != nil {
+				return err
+			}
+			delete(r.activeRemapped, code)
+			return r.unmaskModifierCodes(remap.restoreModifiers)
+		}
+		return r.out.emitKey(remap.code, value)
+	}
+
+	if value == 1 {
+		if mapping, ok := r.comboMappingForKey(code); ok {
+			return r.handleComboMapping(code, value, mapping)
+		}
 	}
 
 	if r.swallowed[code] {
