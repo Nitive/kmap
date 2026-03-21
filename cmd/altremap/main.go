@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -277,8 +278,7 @@ func ioctlSetInt(fd int, req uintptr, value int32) error {
 }
 
 type symbolAction struct {
-	compose string
-	pipe    bool
+	symbol rune
 }
 
 type capsAction struct {
@@ -289,41 +289,41 @@ type capsAction struct {
 
 var symbolMap = map[uint16]symbolAction{
 	// Top row
-	key9:     {compose: "2205"}, // «
-	key0:     {compose: "2206"}, // »
-	keyMinus: {compose: "2207"}, // “
-	keyEqual: {compose: "2208"}, // ”
+	key9:     {symbol: '«'},
+	key0:     {symbol: '»'},
+	keyMinus: {symbol: '“'},
+	keyEqual: {symbol: '”'},
 
 	// Q row
-	keyQ:         {compose: "2215"}, // `
-	keyW:         {compose: "2216"}, // ,
-	keyE:         {compose: "2217"}, // .
-	keyR:         {compose: "2218"}, // +
-	keyI:         {compose: "2203"}, // ↑
-	keyP:         {compose: "2222"}, // —
-	keyLeftBrace: {compose: "2209"}, // /
+	keyQ:         {symbol: '`'},
+	keyW:         {symbol: ','},
+	keyE:         {symbol: '.'},
+	keyR:         {symbol: '+'},
+	keyI:         {symbol: '↑'},
+	keyP:         {symbol: '—'},
+	keyLeftBrace: {symbol: '/'},
 
 	// A row
-	keyS:          {compose: "2214"}, // =
-	keyF:          {compose: "2220"}, // ü
-	keyH:          {compose: "2223"}, // -
-	keyJ:          {compose: "2202"}, // ←
-	keyK:          {compose: "2204"}, // ↓
-	keyL:          {compose: "2201"}, // →
-	keySemicolon:  {compose: "2219"}, // ;
-	keyApostrophe: {compose: "2224"}, // \
+	keyS:          {symbol: '='},
+	keyF:          {symbol: 'ü'},
+	keyH:          {symbol: '-'},
+	keyJ:          {symbol: '←'},
+	keyK:          {symbol: '↓'},
+	keyL:          {symbol: '→'},
+	keySemicolon:  {symbol: ';'},
+	keyApostrophe: {symbol: '\\'},
 
 	// Z row
-	keyZ:   {compose: "2210"}, // :
-	keyX:   {compose: "2211"}, // ?
-	keyV:   {compose: "2225"}, // ~
-	keyB:   {compose: "2213"}, // ×
-	keyN:   {compose: "2224"}, // \
-	keyM:   {compose: "2212"}, // −
-	keyDot: {pipe: true},      // |
+	keyZ:   {symbol: ':'},
+	keyX:   {symbol: '?'},
+	keyV:   {symbol: '~'},
+	keyB:   {symbol: '×'},
+	keyN:   {symbol: '\\'},
+	keyM:   {symbol: '−'},
+	keyDot: {symbol: '|'},
 
 	// Space
-	keySpace: {compose: "2221"}, // NBSP
+	keySpace: {symbol: '\u00a0'}, // NBSP
 }
 
 var composeDigitKey = map[rune]uint16{
@@ -337,6 +337,36 @@ var composeDigitKey = map[rune]uint16{
 	'7': key7,
 	'8': key8,
 	'9': key9,
+}
+
+func composeSequenceForRune(r rune) []uint16 {
+	decimal := strconv.Itoa(int(r))
+	sequence := make([]uint16, 0, len(decimal)+1)
+	sequence = append(sequence, composeDigitKey[rune('0'+len(decimal))])
+	for _, ch := range decimal {
+		sequence = append(sequence, composeDigitKey[ch])
+	}
+	return sequence
+}
+
+func composeRuneKey(ch rune) (uint16, error) {
+	if ch >= '0' && ch <= '9' {
+		keyCode, ok := composeDigitKey[ch]
+		if !ok {
+			return 0, fmt.Errorf("compose code contains unsupported character %q", ch)
+		}
+		return keyCode, nil
+	}
+
+	if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') {
+		keyCode, err := parseKeyName(string(ch))
+		if err != nil {
+			return 0, fmt.Errorf("compose code contains unsupported character %q", ch)
+		}
+		return keyCode, nil
+	}
+
+	return 0, fmt.Errorf("compose code contains unsupported character %q", ch)
 }
 
 var (
@@ -489,15 +519,11 @@ func (r *remapper) emitAltDownIfNeeded() error {
 	return nil
 }
 
-func (r *remapper) emitCompose(code string) error {
+func (r *remapper) emitCompose(keys []uint16) error {
 	if err := r.out.tapKey(keyScrollLock, r.composeDelay); err != nil {
 		return err
 	}
-	for _, ch := range code {
-		keyCode, ok := composeDigitKey[ch]
-		if !ok {
-			return fmt.Errorf("compose code contains unsupported digit %q", ch)
-		}
+	for _, keyCode := range keys {
 		if err := r.out.tapKey(keyCode, r.composeDelay); err != nil {
 			return err
 		}
@@ -505,30 +531,11 @@ func (r *remapper) emitCompose(code string) error {
 	return nil
 }
 
-func (r *remapper) emitPipe() error {
-	if err := r.out.emitKey(keyLeftShift, 1); err != nil {
-		return err
-	}
-	if err := r.out.emitKey(keyBackslash, 1); err != nil {
-		return err
-	}
-	if err := r.out.emitKey(keyBackslash, 0); err != nil {
-		return err
-	}
-	if err := r.out.emitKey(keyLeftShift, 0); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (r *remapper) emitSymbol(action symbolAction) error {
-	if action.compose != "" {
-		return r.emitCompose(action.compose)
+	if action.symbol == 0 {
+		return nil
 	}
-	if action.pipe {
-		return r.emitPipe()
-	}
-	return nil
+	return r.emitCompose(composeSequenceForRune(action.symbol))
 }
 
 func (r *remapper) handleAltKey(code uint16, value int32) error {
@@ -745,7 +752,7 @@ func readInputEvent(r io.Reader) (inputEvent, error) {
 }
 
 func run(devicePath string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
-	in, err := os.Open(devicePath)
+	in, err := os.OpenFile(devicePath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return fmt.Errorf("open input device %s: %w", devicePath, err)
 	}
@@ -781,9 +788,12 @@ func run(devicePath string, configPath string, composeDelay time.Duration, grab 
 	defer signal.Stop(sigCh)
 
 	go func() {
-		<-sigCh
+		sig := <-sigCh
+		log.Printf("received signal %s, shutting down", sig)
 		stopping.Store(true)
-		_ = in.Close()
+		if err := in.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			log.Printf("close input device during shutdown: %v", err)
+		}
 	}()
 
 	log.Printf("altremap started on %s", devicePath)
@@ -795,10 +805,18 @@ func run(devicePath string, configPath string, composeDelay time.Duration, grab 
 	}
 
 	for {
+		if stopping.Load() {
+			return nil
+		}
+
 		ev, err := readInputEvent(in)
 		if err != nil {
 			if stopping.Load() {
 				return nil
+			}
+			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
+				time.Sleep(2 * time.Millisecond)
+				continue
 			}
 			if errors.Is(err, io.EOF) {
 				return nil

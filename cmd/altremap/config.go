@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -94,34 +95,6 @@ type yamlAction struct {
 type yamlConfig struct {
 	SuppressKeydown *stringOrList         `yaml:"suppress_keydown"`
 	Mappings        map[string]yamlAction `yaml:"mappings"`
-}
-
-var composeBySymbol = map[string]string{
-	"→":      "2201",
-	"←":      "2202",
-	"↑":      "2203",
-	"↓":      "2204",
-	"«":      "2205",
-	"»":      "2206",
-	"“":      "2207",
-	"”":      "2208",
-	"/":      "2209",
-	":":      "2210",
-	"?":      "2211",
-	"−":      "2212",
-	"×":      "2213",
-	"=":      "2214",
-	"`":      "2215",
-	",":      "2216",
-	".":      "2217",
-	"+":      "2218",
-	";":      "2219",
-	"ü":      "2220",
-	"\u00a0": "2221", // NBSP
-	"—":      "2222",
-	"-":      "2223",
-	"\\":     "2224",
-	"~":      "2225",
 }
 
 var keyCodeByName = map[string]uint16{
@@ -310,9 +283,9 @@ func parseRawConfigYAML(raw string) (rawConfig, error) {
 	for binding, action := range decoded.Mappings {
 		out.mappings[binding] = rawAction{
 			passthrough: action.Passthrough,
-			toSymbol:    strings.TrimSpace(action.ToSymbol),
+			toSymbol:    action.ToSymbol,
 			toKeys:      []string(action.ToKeys),
-			toChord:     strings.TrimSpace(action.ToChord),
+			toChord:     trimASCIIWhitespace(action.ToChord),
 		}
 	}
 
@@ -423,18 +396,17 @@ func compileAction(action rawAction) (compiledMapping, error) {
 }
 
 func symbolActionFromString(s string) (symbolAction, error) {
-	s = trimQuotes(strings.TrimSpace(s))
-	if normalizeToken(s) == "NBSP" {
+	if strings.EqualFold(s, "NBSP") {
 		s = "\u00a0"
 	}
-	if s == "|" {
-		return symbolAction{pipe: true}, nil
+	if utf8.RuneCountInString(s) != 1 {
+		return symbolAction{}, fmt.Errorf("to_symbol must contain exactly 1 symbol, got %q", s)
 	}
-	code, ok := composeBySymbol[s]
-	if !ok {
-		return symbolAction{}, fmt.Errorf("unsupported to_symbol value %q", s)
+	r, _ := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError {
+		return symbolAction{}, fmt.Errorf("to_symbol must contain a valid symbol, got %q", s)
 	}
-	return symbolAction{compose: code}, nil
+	return symbolAction{symbol: r}, nil
 }
 
 func parseBindingKey(binding string) (string, uint16, error) {
@@ -537,11 +509,15 @@ func normalizeToken(s string) string {
 }
 
 func trimQuotes(s string) string {
-	s = strings.TrimSpace(s)
+	s = trimASCIIWhitespace(s)
 	if len(s) >= 2 {
 		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
 			return s[1 : len(s)-1]
 		}
 	}
 	return s
+}
+
+func trimASCIIWhitespace(s string) string {
+	return strings.Trim(s, " \t\r\n")
 }

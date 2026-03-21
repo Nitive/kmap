@@ -60,16 +60,12 @@ func assertEventsEqual(t *testing.T, got, want []emittedKey) {
 	}
 }
 
-func composeExpectedEvents(t *testing.T, code string) []emittedKey {
+func composeExpectedEvents(t *testing.T, sequence []uint16) []emittedKey {
 	t.Helper()
 	events := []emittedKey{
 		event(keyScrollLock, 1), event(keyScrollLock, 0),
 	}
-	for _, ch := range code {
-		keyCode, ok := composeDigitKey[ch]
-		if !ok {
-			t.Fatalf("unsupported compose digit in test expectation: %q", ch)
-		}
+	for _, keyCode := range sequence {
 		events = append(events, event(keyCode, 1), event(keyCode, 0))
 	}
 	return events
@@ -105,6 +101,35 @@ func sortedCapsKeys() []uint16 {
 	return keys
 }
 
+func TestComposeRuneKeySupportsHexLetters(t *testing.T) {
+	tests := []struct {
+		ch   rune
+		want uint16
+	}{
+		{ch: '0', want: key0},
+		{ch: '9', want: key9},
+		{ch: 'a', want: keyA},
+		{ch: 'c', want: keyC},
+		{ch: 'f', want: keyF},
+		{ch: 'A', want: keyA},
+		{ch: 'F', want: keyF},
+	}
+
+	for _, tc := range tests {
+		got, err := composeRuneKey(tc.ch)
+		if err != nil {
+			t.Fatalf("composeRuneKey(%q): %v", tc.ch, err)
+		}
+		if got != tc.want {
+			t.Fatalf("composeRuneKey(%q) mismatch: got=%d want=%d", tc.ch, got, tc.want)
+		}
+	}
+
+	if _, err := composeRuneKey('-'); err == nil {
+		t.Fatalf("composeRuneKey('-') expected error")
+	}
+}
+
 func TestAltSymbolDoesNotEmitAlt(t *testing.T) {
 	out := &fakeEmitter{}
 	r := newRemapper(out, 0, false)
@@ -116,13 +141,8 @@ func TestAltSymbolDoesNotEmitAlt(t *testing.T) {
 		event(keyLeftAlt, 0),
 	})
 
-	want := []emittedKey{
-		event(keyScrollLock, 1), event(keyScrollLock, 0),
-		event(key2, 1), event(key2, 0),
-		event(key2, 1), event(key2, 0),
-		event(key0, 1), event(key0, 0),
-		event(key1, 1), event(key1, 0),
-	}
+	want := []emittedKey{}
+	want = append(want, composeExpectedEvents(t, composeSequenceForRune('→'))...)
 	assertEventsEqual(t, out.events, want)
 }
 
@@ -258,13 +278,8 @@ func TestCleanupNoAltWhenNeverEmitted(t *testing.T) {
 		t.Fatalf("cleanup: %v", err)
 	}
 
-	want := []emittedKey{
-		event(keyScrollLock, 1), event(keyScrollLock, 0),
-		event(key2, 1), event(key2, 0),
-		event(key2, 1), event(key2, 0),
-		event(key0, 1), event(key0, 0),
-		event(key1, 1), event(key1, 0),
-	}
+	want := []emittedKey{}
+	want = append(want, composeExpectedEvents(t, composeSequenceForRune('→'))...)
 	assertEventsEqual(t, out.events, want)
 }
 
@@ -284,18 +299,8 @@ func TestAltAllSymbolMappings(t *testing.T) {
 			})
 
 			var want []emittedKey
-			switch {
-			case action.compose != "":
-				want = composeExpectedEvents(t, action.compose)
-			case action.pipe:
-				want = []emittedKey{
-					event(keyLeftShift, 1),
-					event(keyBackslash, 1),
-					event(keyBackslash, 0),
-					event(keyLeftShift, 0),
-				}
-			default:
-				want = nil
+			if action.symbol != 0 {
+				want = composeExpectedEvents(t, composeSequenceForRune(action.symbol))
 			}
 
 			assertEventsEqual(t, out.events, want)

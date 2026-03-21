@@ -6,8 +6,7 @@ suppress_keydown:
 # Full mapping set.
 mappings:
   # Alt layer (symbols)
-  Alt-Tab:
-    passthrough: true
+  # Any Alt+key not listed here automatically passes through.
   Alt-9:
     to_symbol: «
   Alt-0:
@@ -61,7 +60,7 @@ mappings:
   Alt-Dot:
     to_symbol: "|"
   Alt-Space:
-    to_symbol: NBSP
+    to_symbol: " "
 
   # Caps layer (navigation + app shortcuts)
   Caps-W:

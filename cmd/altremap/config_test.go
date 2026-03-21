@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,7 +74,7 @@ mappings:
 	}
 
 	altJ := cfg.altMappings[keyJ]
-	if altJ.kind != mappingSymbol || altJ.symbol.compose != "2202" {
+	if altJ.kind != mappingSymbol || altJ.symbol.symbol != '←' {
 		t.Fatalf("Alt-J mapping mismatch: %#v", altJ)
 	}
 
@@ -95,6 +96,53 @@ mappings:
 	got := raw.mappings["Caps-H"].toKeys
 	if len(got) != 1 || got[0] != "Backspace" {
 		t.Fatalf("unexpected to_keys value: %#v", got)
+	}
+}
+
+func TestParseAndCompileNBSPToSymbol(t *testing.T) {
+	raw, err := parseRawConfigYAML(`
+mappings:
+  Alt-Space:
+    to_symbol: " "
+`)
+	if err != nil {
+		t.Fatalf("parseRawConfigYAML: %v", err)
+	}
+
+	action, ok := raw.mappings["Alt-Space"]
+	if !ok {
+		t.Fatalf("missing Alt-Space mapping")
+	}
+
+	compiled, err := compileAction(action)
+	if err != nil {
+		t.Fatalf("compileAction: %v", err)
+	}
+	if compiled.kind != mappingSymbol || compiled.symbol.symbol != '\u00a0' {
+		t.Fatalf("expected NBSP symbol, got %#v", compiled)
+	}
+}
+
+func TestCompileActionToSymbolRejectsMultipleSymbols(t *testing.T) {
+	_, err := compileAction(rawAction{toSymbol: "ab"})
+	if err == nil {
+		t.Fatalf("expected error for multi-symbol to_symbol")
+	}
+	if !strings.Contains(err.Error(), "exactly 1 symbol") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCompileActionPipeIsSymbol(t *testing.T) {
+	compiled, err := compileAction(rawAction{toSymbol: "|"})
+	if err != nil {
+		t.Fatalf("compileAction: %v", err)
+	}
+	if compiled.kind != mappingSymbol {
+		t.Fatalf("expected mappingSymbol, got %d", compiled.kind)
+	}
+	if compiled.symbol.symbol != '|' {
+		t.Fatalf("expected symbol |, got %#v", compiled.symbol)
 	}
 }
 
@@ -132,14 +180,14 @@ func TestRepositoryAltremapConfigLoads(t *testing.T) {
 		t.Fatalf("expected suppressAlt/suppressCaps to be true")
 	}
 
-	if m := cfg.altMappings[keyTab]; m.kind != mappingPassthrough {
-		t.Fatalf("Alt-Tab should be passthrough, got kind=%d", m.kind)
+	if _, ok := cfg.altMappings[keyTab]; ok {
+		t.Fatalf("Alt-Tab should not be explicitly mapped in config")
 	}
-	if m := cfg.altMappings[keyM]; m.kind != mappingSymbol || m.symbol.compose != "2212" {
-		t.Fatalf("Alt-M should map to symbol − (2212), got %#v", m)
+	if m := cfg.altMappings[keyM]; m.kind != mappingSymbol || m.symbol.symbol != '−' {
+		t.Fatalf("Alt-M should map to symbol −, got %#v", m)
 	}
-	if m := cfg.altMappings[keyN]; m.kind != mappingSymbol || m.symbol.compose != "2224" {
-		t.Fatalf("Alt-N should map to symbol \\ (2224), got %#v", m)
+	if m := cfg.altMappings[keyN]; m.kind != mappingSymbol || m.symbol.symbol != '\\' {
+		t.Fatalf("Alt-N should map to symbol \\, got %#v", m)
 	}
 	if m := cfg.capsMappings[keyH]; m.kind != mappingRemap || m.remapCode != keyBackspace {
 		t.Fatalf("Caps-H should map to Backspace, got %#v", m)
