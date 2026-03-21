@@ -12,8 +12,6 @@ User=nitive
 Group=input
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 Environment="WAYLAND_DISPLAY=wayland-0"
-Environment="KEYBOARD_DEVICE=/dev/input/by-path/platform-i8042-serio-0-event-kbd"
 
 [Install]
-DefaultInstance=config
 WantedBy=multi-user.target

@@ -53,7 +53,7 @@ func runStartCommand(args []string) error {
 	fs := flag.NewFlagSet("kmap start", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	devicePath := fs.String("device", defaultDevicePath, "input keyboard device path")
+	devicePath := fs.String("device", "", "input keyboard device path override (optional)")
 	configPath := fs.String("config", "kmap.yaml", "YAML config file path")
 	composeDelay := fs.Duration("compose-delay", 5*time.Millisecond, "delay between compose key taps")
 	grab := fs.Bool("grab", true, "grab input device so physical events are not duplicated")

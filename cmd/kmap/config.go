@@ -33,6 +33,7 @@ type compiledMapping struct {
 type runtimeConfig struct {
 	suppressAlt  bool
 	suppressCaps bool
+	devices      []string
 
 	altMappings  map[uint16]compiledMapping
 	capsMappings map[uint16]compiledMapping
@@ -41,6 +42,7 @@ type runtimeConfig struct {
 type rawConfig struct {
 	suppressDefined bool
 	suppressKeys    []string
+	devices         []string
 	mappings        map[string]rawAction
 }
 
@@ -94,6 +96,7 @@ type yamlAction struct {
 
 type yamlConfig struct {
 	SuppressKeydown *stringOrList         `yaml:"suppress_keydown"`
+	Devices         *stringOrList         `yaml:"devices"`
 	Mappings        map[string]yamlAction `yaml:"mappings"`
 }
 
@@ -252,6 +255,9 @@ func parseRawConfigYAML(raw string) (rawConfig, error) {
 		out.suppressDefined = true
 		out.suppressKeys = append(out.suppressKeys, []string(*decoded.SuppressKeydown)...)
 	}
+	if decoded.Devices != nil {
+		out.devices = append(out.devices, []string(*decoded.Devices)...)
+	}
 
 	for binding, action := range decoded.Mappings {
 		out.mappings[binding] = rawAction{
@@ -279,6 +285,14 @@ func applyRawConfig(cfg *runtimeConfig, raw rawConfig) error {
 				return fmt.Errorf("unsupported suppress_keydown value %q", key)
 			}
 		}
+	}
+
+	if len(raw.devices) > 0 {
+		devices, err := normalizeDevicePaths(raw.devices)
+		if err != nil {
+			return err
+		}
+		cfg.devices = devices
 	}
 
 	for binding, action := range raw.mappings {
@@ -493,4 +507,25 @@ func trimQuotes(s string) string {
 
 func trimASCIIWhitespace(s string) string {
 	return strings.Trim(s, " \t\r\n")
+}
+
+func normalizeDevicePaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		trimmed := trimASCIIWhitespace(path)
+		if trimmed == "" {
+			return nil, errors.New("devices must not contain empty paths")
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out, nil
 }

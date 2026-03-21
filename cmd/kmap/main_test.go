@@ -194,6 +194,42 @@ func TestReleaseCapsOnStart(t *testing.T) {
 	})
 }
 
+func TestResolveDevicePaths(t *testing.T) {
+	cfg := runtimeConfig{
+		devices: []string{"/dev/input/a", "/dev/input/b"},
+	}
+
+	t.Run("cli override wins", func(t *testing.T) {
+		paths, err := resolveDevicePaths("/dev/input/override", cfg)
+		if err != nil {
+			t.Fatalf("resolveDevicePaths: %v", err)
+		}
+		if len(paths) != 1 || paths[0] != "/dev/input/override" {
+			t.Fatalf("unexpected paths: %#v", paths)
+		}
+	})
+
+	t.Run("config devices used when no override", func(t *testing.T) {
+		paths, err := resolveDevicePaths("", cfg)
+		if err != nil {
+			t.Fatalf("resolveDevicePaths: %v", err)
+		}
+		if len(paths) != 2 || paths[0] != "/dev/input/a" || paths[1] != "/dev/input/b" {
+			t.Fatalf("unexpected paths: %#v", paths)
+		}
+	})
+
+	t.Run("default device fallback", func(t *testing.T) {
+		paths, err := resolveDevicePaths("", runtimeConfig{})
+		if err != nil {
+			t.Fatalf("resolveDevicePaths: %v", err)
+		}
+		if len(paths) != 1 || paths[0] != defaultDevicePath {
+			t.Fatalf("unexpected paths: %#v", paths)
+		}
+	})
+}
+
 func TestAltSymbolDoesNotEmitAlt(t *testing.T) {
 	out := &fakeEmitter{}
 	r := newConfiguredRemapper(t, out)

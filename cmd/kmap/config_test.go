@@ -9,6 +9,9 @@ import (
 
 func TestParseRawConfigYAML(t *testing.T) {
 	raw, err := parseRawConfigYAML(`
+devices:
+  - /dev/input/by-path/platform-i8042-serio-0-event-kbd
+  - /dev/input/by-id/usb-04d9_USB-HID_Keyboard-event-kbd
 suppress_keydown:
   - Caps
   - Alt
@@ -31,6 +34,9 @@ mappings:
 	if len(raw.suppressKeys) != 2 {
 		t.Fatalf("unexpected suppress_keydown size: %d", len(raw.suppressKeys))
 	}
+	if len(raw.devices) != 2 {
+		t.Fatalf("unexpected devices size: %d", len(raw.devices))
+	}
 
 	tab := raw.mappings["Alt-Tab"]
 	if tab.passthrough == nil || !*tab.passthrough {
@@ -46,6 +52,8 @@ mappings:
 
 func TestApplyRawConfigCompilesMappings(t *testing.T) {
 	raw, err := parseRawConfigYAML(`
+devices:
+  - /dev/input/by-path/platform-i8042-serio-0-event-kbd
 suppress_keydown: [Caps, Alt]
 mappings:
   Alt-Tab:
@@ -66,6 +74,9 @@ mappings:
 
 	if !cfg.suppressAlt || !cfg.suppressCaps {
 		t.Fatalf("unexpected suppress flags: alt=%v caps=%v", cfg.suppressAlt, cfg.suppressCaps)
+	}
+	if len(cfg.devices) != 1 || cfg.devices[0] != "/dev/input/by-path/platform-i8042-serio-0-event-kbd" {
+		t.Fatalf("devices mismatch: %#v", cfg.devices)
 	}
 
 	altTab := cfg.altMappings[keyTab]
@@ -163,6 +174,27 @@ func TestLoadRuntimeConfigMissingFileUsesDefaults(t *testing.T) {
 	if len(cfg.capsMappings) != len(def.capsMappings) {
 		t.Fatalf("caps mappings size mismatch: got=%d want=%d", len(cfg.capsMappings), len(def.capsMappings))
 	}
+	if len(cfg.devices) != len(def.devices) {
+		t.Fatalf("devices size mismatch: got=%d want=%d", len(cfg.devices), len(def.devices))
+	}
+}
+
+func TestNormalizeDevicePaths(t *testing.T) {
+	paths, err := normalizeDevicePaths([]string{
+		" /dev/input/a ",
+		"/dev/input/b",
+		"/dev/input/a",
+	})
+	if err != nil {
+		t.Fatalf("normalizeDevicePaths: %v", err)
+	}
+	if len(paths) != 2 || paths[0] != "/dev/input/a" || paths[1] != "/dev/input/b" {
+		t.Fatalf("unexpected paths: %#v", paths)
+	}
+
+	if _, err := normalizeDevicePaths([]string{"", "/dev/input/a"}); err == nil {
+		t.Fatalf("expected empty-device-path error")
+	}
 }
 
 func TestRepositoryKMapConfigLoads(t *testing.T) {
@@ -178,6 +210,9 @@ func TestRepositoryKMapConfigLoads(t *testing.T) {
 
 	if !cfg.suppressAlt || !cfg.suppressCaps {
 		t.Fatalf("expected suppressAlt/suppressCaps to be true")
+	}
+	if len(cfg.devices) == 0 {
+		t.Fatalf("expected devices to be configured in kmap.yaml")
 	}
 
 	if _, ok := cfg.altMappings[keyTab]; ok {

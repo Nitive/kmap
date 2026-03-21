@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -705,35 +705,92 @@ func releaseCapsOnStart(out keyEmitter, cfg runtimeConfig, capsEnabled bool, del
 	return out.tapKey(keyCapsLock, delay)
 }
 
-func run(devicePath string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
-	in, err := os.OpenFile(devicePath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return fmt.Errorf("open input device %s: %w", devicePath, err)
-	}
-	defer in.Close()
+type inputDeviceRuntime struct {
+	path    string
+	in      *os.File
+	inFD    int
+	grabbed bool
+	rem     *remapper
+}
 
+type keyedInputEvent struct {
+	deviceIndex int
+	code        uint16
+	value       int32
+}
+
+func resolveDevicePaths(deviceOverride string, cfg runtimeConfig) ([]string, error) {
+	trimmedOverride := trimASCIIWhitespace(deviceOverride)
+	if trimmedOverride != "" {
+		return []string{trimmedOverride}, nil
+	}
+
+	if len(cfg.devices) > 0 {
+		paths := make([]string, len(cfg.devices))
+		copy(paths, cfg.devices)
+		return paths, nil
+	}
+
+	return []string{defaultDevicePath}, nil
+}
+
+func run(deviceOverride string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
 	cfg, err := loadRuntimeConfig(configPath)
 	if err != nil {
 		return err
 	}
 
-	inFD := int(in.Fd())
-	if grab {
-		if err := ioctlSetInt(inFD, eviocgrab, 1); err != nil {
-			return fmt.Errorf("grab input device %s: %w", devicePath, err)
-		}
-		defer func() {
-			_ = ioctlSetInt(inFD, eviocgrab, 0)
-		}()
+	devicePaths, err := resolveDevicePaths(deviceOverride, cfg)
+	if err != nil {
+		return err
+	}
+	if len(devicePaths) == 0 {
+		return errors.New("no input devices configured")
 	}
 
-	out, err := createVirtualKeyboard("Go Alt Layer")
+	devices := make([]inputDeviceRuntime, 0, len(devicePaths))
+	defer func() {
+		for _, device := range devices {
+			_ = device.in.Close()
+		}
+	}()
+
+	for _, path := range devicePaths {
+		in, openErr := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if openErr != nil {
+			return fmt.Errorf("open input device %s: %w", path, openErr)
+		}
+		devices = append(devices, inputDeviceRuntime{
+			path: path,
+			in:   in,
+			inFD: int(in.Fd()),
+		})
+	}
+
+	if grab {
+		defer func() {
+			for _, device := range devices {
+				if device.grabbed {
+					_ = ioctlSetInt(device.inFD, eviocgrab, 0)
+				}
+			}
+		}()
+
+		for i := range devices {
+			if err := ioctlSetInt(devices[i].inFD, eviocgrab, 1); err != nil {
+				return fmt.Errorf("grab input device %s: %w", devices[i].path, err)
+			}
+			devices[i].grabbed = true
+		}
+	}
+
+	out, err := createVirtualKeyboard("kmap")
 	if err != nil {
 		return err
 	}
 	defer out.close()
 
-	capsEnabled, err := isCapsLockEnabled(inFD)
+	capsEnabled, err := isCapsLockEnabled(devices[0].inFD)
 	if err != nil {
 		log.Printf("could not query caps-lock state: %v", err)
 	}
@@ -741,62 +798,122 @@ func run(devicePath string, configPath string, composeDelay time.Duration, grab 
 		return fmt.Errorf("release caps on start: %w", err)
 	}
 
-	rem := newRemapperWithConfig(out, composeDelay, verbose, cfg)
-	defer rem.cleanup()
+	for i := range devices {
+		rem := newRemapperWithConfig(out, composeDelay, verbose, cfg)
+		devices[i].rem = rem
+	}
+	defer func() {
+		for _, device := range devices {
+			if device.rem != nil {
+				_ = device.rem.cleanup()
+			}
+		}
+	}()
 
-	var stopping atomic.Bool
+	eventsCh := make(chan keyedInputEvent, 256)
+	errCh := make(chan error, len(devices))
+	doneCh := make(chan int, len(devices))
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	stopReaders := func() {
+		stopOnce.Do(func() {
+			close(stopCh)
+			for _, device := range devices {
+				_ = device.in.Close()
+			}
+		})
+	}
+
+	for i := range devices {
+		deviceIndex := i
+		device := devices[i]
+		go func() {
+			defer func() {
+				doneCh <- deviceIndex
+			}()
+			for {
+				ev, readErr := readInputEvent(device.in)
+				if readErr != nil {
+					if errors.Is(readErr, syscall.EAGAIN) || errors.Is(readErr, syscall.EWOULDBLOCK) {
+						select {
+						case <-stopCh:
+							return
+						default:
+						}
+						time.Sleep(2 * time.Millisecond)
+						continue
+					}
+					if errors.Is(readErr, io.EOF) || errors.Is(readErr, os.ErrClosed) {
+						return
+					}
+					if errors.Is(readErr, syscall.EINTR) {
+						continue
+					}
+					select {
+					case errCh <- fmt.Errorf("read input event %s: %w", device.path, readErr):
+					case <-stopCh:
+					}
+					return
+				}
+				if ev.Type != evKey {
+					continue
+				}
+				keyEvent := keyedInputEvent{
+					deviceIndex: deviceIndex,
+					code:        ev.Code,
+					value:       ev.Value,
+				}
+				select {
+				case eventsCh <- keyEvent:
+				case <-stopCh:
+					return
+				}
+			}
+		}()
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	go func() {
-		sig := <-sigCh
-		log.Printf("received signal %s, shutting down", sig)
-		stopping.Store(true)
-		if err := in.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			log.Printf("close input device during shutdown: %v", err)
-		}
-	}()
-
-	log.Printf("kmap started on %s", devicePath)
+	log.Printf("kmap started on %d input device(s)", len(devices))
+	for _, device := range devices {
+		log.Printf("input device: %s", device.path)
+	}
 	if grab {
-		log.Printf("input device is grabbed")
+		log.Printf("input devices are grabbed")
 	}
 	if configPath != "" {
 		log.Printf("config path: %s", configPath)
 	}
 
+	activeReaders := len(devices)
 	for {
-		if stopping.Load() {
+		if activeReaders == 0 {
 			return nil
 		}
-
-		ev, err := readInputEvent(in)
-		if err != nil {
-			if stopping.Load() {
-				return nil
+		select {
+		case sig := <-sigCh:
+			log.Printf("received signal %s, shutting down", sig)
+			stopReaders()
+		case idx := <-doneCh:
+			_ = idx
+			activeReaders--
+		case readErr := <-errCh:
+			stopReaders()
+			return readErr
+		case ev := <-eventsCh:
+			rem := devices[ev.deviceIndex].rem
+			if err := rem.handleKey(ev.code, ev.value); err != nil {
+				stopReaders()
+				return fmt.Errorf(
+					"handle key device=%s code=%d value=%d: %w",
+					devices[ev.deviceIndex].path,
+					ev.code,
+					ev.value,
+					err,
+				)
 			}
-			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-				time.Sleep(2 * time.Millisecond)
-				continue
-			}
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			if errors.Is(err, syscall.EINTR) {
-				continue
-			}
-			if errors.Is(err, os.ErrClosed) {
-				return nil
-			}
-			return fmt.Errorf("read input event: %w", err)
-		}
-
-		if ev.Type != evKey {
-			continue
-		}
-		if err := rem.handleKey(ev.Code, ev.Value); err != nil {
-			return fmt.Errorf("handle key code=%d value=%d: %w", ev.Code, ev.Value, err)
 		}
 	}
 }
