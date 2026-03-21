@@ -721,7 +721,8 @@ func isRetryableInputError(err error) bool {
 		errors.Is(err, syscall.ENOENT) ||
 		errors.Is(err, syscall.ENODEV) ||
 		errors.Is(err, syscall.ENXIO) ||
-		errors.Is(err, syscall.EIO)
+		errors.Is(err, syscall.EIO) ||
+		errors.Is(err, syscall.EBUSY)
 }
 
 func resolveDevicePaths(deviceOverride string, cfg config.Runtime) []string {

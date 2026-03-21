@@ -208,6 +208,73 @@ func TestOrchestrator(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps running when one device is busy at startup", func(t *testing.T) {
+		useTempRuntimeDir(t)
+
+		busyPath := "/dev/input/busy"
+		availablePath := "/dev/input/external"
+		inDev := &mockInputDevice{path: availablePath}
+		outKB := &mockOutputDevice{}
+		sigCh := make(chan os.Signal, 1)
+		startedCh := make(chan string, 2)
+
+		orc := &orchestrator{
+			cfg:         config.Runtime{},
+			devicePaths: []string{busyPath, availablePath},
+			inputFactory: func(path string, grab bool) (inputDevice, <-chan event.KeyEvent, <-chan error, error) {
+				_ = grab
+				if path == busyPath {
+					return nil, nil, nil, fmt.Errorf("grab input device %s: %w", path, syscall.EBUSY)
+				}
+				startedCh <- path
+				return inDev, make(chan event.KeyEvent), make(chan error), nil
+			},
+			outputFactory: func(name string, in <-chan event.KeyEvent) (outputDevice, <-chan error, error) {
+				return outKB, make(chan error), nil
+			},
+			retrySource:  make(chan struct{}),
+			signalSource: sigCh,
+		}
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- orc.run()
+		}()
+
+		select {
+		case path := <-startedCh:
+			if path != availablePath {
+				t.Fatalf("unexpected started device: %s", path)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for available device to start")
+		}
+
+		select {
+		case err := <-errCh:
+			t.Fatalf("orc.run() returned early: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+
+		sigCh <- syscall.SIGINT
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("orc.run() returned error: %v", err)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for orc.run() to return")
+		}
+
+		if !inDev.closed {
+			t.Error("input device was not closed")
+		}
+		if !outKB.closed {
+			t.Error("output device was not closed")
+		}
+	})
+
 	t.Run("shuts down when module returns error", func(t *testing.T) {
 		useTempRuntimeDir(t)
 
