@@ -113,7 +113,7 @@ func chordExpectedEvents(mods []uint16, key uint16) []emittedKey {
 
 func loadRepoRuntimeConfig(t *testing.T) config.Runtime {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "kmap.yaml")
+	path := filepath.Join("..", "..", "..", "testdata", "example-kmap.yaml")
 	cfg, err := config.LoadRuntime(path)
 	if err != nil {
 		t.Fatalf("LoadRuntime(%s): %v", path, err)

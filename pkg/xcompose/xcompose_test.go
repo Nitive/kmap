@@ -51,7 +51,7 @@ func TestDefaultOutputPathUsesHomeDirectory(t *testing.T) {
 
 func TestGenerateXComposeFileWritesExpectedEntries(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "XCompose")
-	configPath := filepath.Join("..", "..", "kmap.yaml")
+	configPath := filepath.Join("..", "..", "testdata", "example-kmap.yaml")
 	if err := GenerateFile(configPath, outPath); err != nil {
 		t.Fatalf("GenerateFile: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestEscapeSymbolSpecialCases(t *testing.T) {
 
 func TestGenerateFileCreatesParentDirectories(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested", "dir", "XCompose")
-	configPath := filepath.Join("..", "..", "kmap.yaml")
+	configPath := filepath.Join("..", "..", "testdata", "example-kmap.yaml")
 
 	if err := GenerateFile(configPath, outPath); err != nil {
 		t.Fatalf("GenerateFile: %v", err)

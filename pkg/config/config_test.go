@@ -427,7 +427,7 @@ func TestNormalizeDevicePaths(t *testing.T) {
 }
 
 func TestRepositoryKMapConfigLoads(t *testing.T) {
-	path := filepath.Join("..", "..", "kmap.yaml")
+	path := filepath.Join("..", "..", "testdata", "example-kmap.yaml")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}

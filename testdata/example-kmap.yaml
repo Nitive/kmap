@@ -1,0 +1,29 @@
+suppress_keydown:
+  - Alt
+  - Caps
+
+mappings:
+  Alt-L:
+    to_symbol: →
+  Alt-M:
+    to_symbol: −
+  Alt-N:
+    to_symbol: "\\"
+  Alt-Space:
+    to_symbol: NBSP
+  Alt-Backslash:
+    to_symbol: "|"
+  Alt-Shift-Semicolon:
+    to_symbol: ";"
+  Caps-H:
+    to_keys: Backspace
+  Caps-J:
+    to_keys: Left
+  Caps-K:
+    to_keys: Down
+  Caps-L:
+    to_keys: Right
+  Caps-A:
+    to_chord: Meta-Ctrl-Alt-Shift-A
+  Caps-Backspace:
+    pause: true
