@@ -402,9 +402,11 @@ func (r *remapper) handleMappedAction(code uint16, value int32, mapping config.C
 
 func (r *remapper) handlePendingAltKey(code uint16, value int32) error {
 	r.altUsed = true
-	if mapping, ok := r.altMappings[code]; ok && !r.anyNonAltModifierDown() {
-		r.logf("alt key %d mapped via config kind=%d", code, mapping.Kind)
-		return r.handleMappedAction(code, value, mapping, true)
+	if value == 1 {
+		if mapping, ok := r.altMappings[code]; ok && !r.anyNonAltModifierDown() {
+			r.logf("alt key %d mapped via config kind=%d", code, mapping.Kind)
+			return r.handleMappedAction(code, value, mapping, true)
+		}
 	}
 
 	if err := r.emitAltDownIfNeeded(); err != nil {
@@ -461,17 +463,18 @@ func (r *remapper) handleCapsKey(value int32) error {
 
 func (r *remapper) handleCapsLayerKey(code uint16, value int32) error {
 	r.capsUsed = true
-	mapping, ok := r.capsMappings[code]
-	if !ok {
-		return r.emitShortcutAwareKey(code, value)
+	if value == 1 {
+		if mapping, ok := r.capsMappings[code]; ok {
+			r.logf("caps key %d mapped via config kind=%d", code, mapping.Kind)
+			return r.handleMappedAction(code, value, mapping, false)
+		}
 	}
 
-	r.logf("caps key %d mapped via config kind=%d", code, mapping.Kind)
-	return r.handleMappedAction(code, value, mapping, false)
+	return r.emitShortcutAwareKey(code, value)
 }
 
 func (r *remapper) emitShortcutAwareKey(code uint16, value int32) error {
-	if r.shouldApplyShortcutRemap() {
+	if value == 1 && r.shouldApplyShortcutRemap() {
 		shortcutMaps := r.shortcutMaps
 		if r.shortcutFn != nil {
 			if dynamicMaps := r.shortcutFn(); dynamicMaps != nil {
@@ -479,9 +482,7 @@ func (r *remapper) emitShortcutAwareKey(code uint16, value int32) error {
 			}
 		}
 		if remapCode, ok := shortcutMaps[code]; ok {
-			if value == 1 {
-				r.activeRemapped[code] = remapCode
-			}
+			r.activeRemapped[code] = remapCode
 			return r.out.emitKey(remapCode, value)
 		}
 	}

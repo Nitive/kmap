@@ -659,3 +659,92 @@ func TestCapsTapEmitsLayoutSwitchRequest(t *testing.T) {
 		t.Fatalf("unexpected layout switch events: %#v", out.layoutSwitches)
 	}
 }
+
+func TestStuckKeyBug(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutMappings[config.KeyA] = config.KeyB
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	t.Run("release_with_modifier_should_not_remap_if_press_was_not_remapped", func(t *testing.T) {
+		out.events = nil
+		runSequence(t, r, []emittedKey{
+			evt(config.KeyA, 1),
+			evt(config.KeyLeftCtrl, 1),
+			evt(config.KeyA, 0),
+			evt(config.KeyLeftCtrl, 0),
+		})
+
+		want := []emittedKey{
+			evt(config.KeyA, 1),
+			evt(config.KeyLeftCtrl, 1),
+			evt(config.KeyA, 0),
+			evt(config.KeyLeftCtrl, 0),
+		}
+		assertEventsEqual(t, out.events, want)
+	})
+
+	t.Run("press_with_modifier_should_remain_remapped_after_modifier_release", func(t *testing.T) {
+		out.events = nil
+		runSequence(t, r, []emittedKey{
+			evt(config.KeyLeftCtrl, 1),
+			evt(config.KeyA, 1),
+			evt(config.KeyLeftCtrl, 0),
+			evt(config.KeyA, 0),
+		})
+
+		want := []emittedKey{
+			evt(config.KeyLeftCtrl, 1),
+			evt(config.KeyB, 1),
+			evt(config.KeyLeftCtrl, 0),
+			evt(config.KeyB, 0),
+		}
+		assertEventsEqual(t, out.events, want)
+	})
+
+	t.Run("repeat_with_modifier_should_not_remap_if_press_was_not_remapped", func(t *testing.T) {
+		out.events = nil
+		runSequence(t, r, []emittedKey{
+			evt(config.KeyA, 1),
+			evt(config.KeyLeftCtrl, 1),
+			evt(config.KeyA, 2),
+			evt(config.KeyA, 0),
+			evt(config.KeyLeftCtrl, 0),
+		})
+
+		want := []emittedKey{
+			evt(config.KeyA, 1),
+			evt(config.KeyLeftCtrl, 1),
+			evt(config.KeyA, 2),
+			evt(config.KeyA, 0),
+			evt(config.KeyLeftCtrl, 0),
+		}
+		assertEventsEqual(t, out.events, want)
+	})
+}
+
+func TestStuckKeyLayerBug(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.CapsMappings[config.KeyA] = config.CompiledMapping{
+		Kind:   config.MappingSymbol,
+		Symbol: '→',
+	}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	t.Run("release_with_layer_should_not_swallow_if_press_was_not_swallowed", func(t *testing.T) {
+		out.events = nil
+		runSequence(t, r, []emittedKey{
+			evt(config.KeyA, 1),        // Press A (no layer)
+			evt(config.KeyCapsLock, 1), // Press CapsLock (activates layer)
+			evt(config.KeyA, 0),        // Release A (Layer is active) -> should NOT be swallowed
+			evt(config.KeyCapsLock, 0), // Release CapsLock
+		})
+
+		want := []emittedKey{
+			evt(config.KeyA, 1),
+			evt(config.KeyA, 0),
+		}
+		assertEventsEqual(t, out.events, want)
+	})
+}
