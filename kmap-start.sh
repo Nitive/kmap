@@ -5,7 +5,7 @@ set -euo pipefail
 cd /home/nitive/Develop/keyboard
 
 device="${KEYBOARD_DEVICE:-}"
-config="${KMAP_CONFIG:-${ALTREMAP_CONFIG:-/home/nitive/Develop/keyboard/kmap.yaml}}"
+config="${KMAP_CONFIG:-/home/nitive/Develop/keyboard/kmap.yaml}"
 
 args=(start --config "$config")
 if [[ -n "$device" ]]; then
