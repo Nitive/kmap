@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	runRemapFn       = run
-	runSetupKeymapFn = runSetupKeymap
+	runRemapFn         = run
+	runSetupKeymapFn   = runSetupKeymap
+	generateXComposeFn = generateXComposeFile
 )
 
 func runCLI(args []string) error {
@@ -41,6 +42,7 @@ func runRemapCommand(args []string) error {
 
 	devicePath := fs.String("device", defaultDevicePath, "input keyboard device path")
 	configPath := fs.String("config", "altremap.yaml", "optional YAML config file path")
+	generateXCompose := fs.String("generate-xcompose", "", "write deterministic XCompose entries to this path and exit")
 	composeDelay := fs.Duration("compose-delay", 5*time.Millisecond, "delay between compose key taps")
 	grab := fs.Bool("grab", true, "grab input device so physical events are not duplicated")
 	verbose := fs.Bool("verbose", false, "enable verbose logs")
@@ -60,6 +62,9 @@ func runRemapCommand(args []string) error {
 	}
 	if *composeDelay < 0 {
 		return errors.New("compose-delay must be >= 0")
+	}
+	if *generateXCompose != "" {
+		return generateXComposeFn(*configPath, *generateXCompose)
 	}
 
 	return runRemapFn(*devicePath, *configPath, *composeDelay, *grab, *verbose)

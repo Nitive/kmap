@@ -15,6 +15,10 @@ install-altremap:
 	sudo systemctl start altremap-built-in-keyboard.service
 	sudo systemctl start altremap-external-keyboard.service
 
+restart:
+	/home/nitive/Develop/keyboard/bin/altremap --config /home/nitive/Develop/keyboard/altremap.yaml --generate-xcompose /home/nitive/.XCompose
+	sudo systemctl restart altremap-built-in-keyboard.service altremap-external-keyboard.service
+
 uninstall-altremap:
 	sudo rm /usr/lib/systemd/system/altremap-built-in-keyboard.service
 	sudo rm /usr/lib/systemd/system/altremap-external-keyboard.service

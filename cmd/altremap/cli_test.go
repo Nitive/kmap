@@ -40,13 +40,19 @@ func TestRunCLIDispatchesSetupKeymapSubcommand(t *testing.T) {
 func TestRunCLIDefaultsToRemapper(t *testing.T) {
 	origSetup := runSetupKeymapFn
 	origRemap := runRemapFn
+	origGenerate := generateXComposeFn
 	defer func() {
 		runSetupKeymapFn = origSetup
 		runRemapFn = origRemap
+		generateXComposeFn = origGenerate
 	}()
 
 	runSetupKeymapFn = func(args []string) error {
 		t.Fatalf("runSetupKeymapFn should not be called for default CLI mode")
+		return nil
+	}
+	generateXComposeFn = func(configPath string, outputPath string) error {
+		t.Fatalf("generateXComposeFn should not be called for default CLI mode")
 		return nil
 	}
 
@@ -105,5 +111,54 @@ func TestRunRemapCommandRejectsNegativeComposeDelay(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "compose-delay must be >= 0") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
+	origSetup := runSetupKeymapFn
+	origRemap := runRemapFn
+	origGenerate := generateXComposeFn
+	defer func() {
+		runSetupKeymapFn = origSetup
+		runRemapFn = origRemap
+		generateXComposeFn = origGenerate
+	}()
+
+	runSetupKeymapFn = func(args []string) error {
+		t.Fatalf("runSetupKeymapFn should not be called for generate-xcompose")
+		return nil
+	}
+	runRemapFn = func(string, string, time.Duration, bool, bool) error {
+		t.Fatalf("runRemapFn should not be called for generate-xcompose")
+		return nil
+	}
+
+	var (
+		called    bool
+		gotConfig string
+		gotOutput string
+	)
+	generateXComposeFn = func(configPath string, outputPath string) error {
+		called = true
+		gotConfig = configPath
+		gotOutput = outputPath
+		return nil
+	}
+
+	err := runCLI([]string{
+		"--config", "altremap.yaml",
+		"--generate-xcompose", "/tmp/generated.XCompose",
+	})
+	if err != nil {
+		t.Fatalf("runCLI: %v", err)
+	}
+	if !called {
+		t.Fatalf("generateXComposeFn was not called")
+	}
+	if gotConfig != "altremap.yaml" {
+		t.Fatalf("config mismatch: %q", gotConfig)
+	}
+	if gotOutput != "/tmp/generated.XCompose" {
+		t.Fatalf("output mismatch: %q", gotOutput)
 	}
 }
