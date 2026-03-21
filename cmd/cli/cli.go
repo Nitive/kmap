@@ -90,7 +90,7 @@ func runStartCommand(args []string) error {
 	verbose := fs.Bool("verbose", false, "enable verbose logs")
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: kmap start [flags]\n")
+		_, _ = fmt.Fprintf(fs.Output(), "Usage: kmap start [flags]\n")
 		fs.PrintDefaults()
 	}
 
@@ -115,8 +115,8 @@ func runGenerateXComposeCommand(args []string) error {
 	outputPath := fs.String("output", "", "write deterministic XCompose entries to this path")
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: kmap generate-xcompose --output <path> [--config <path>]\n")
-		fmt.Fprintf(fs.Output(), "   or: kmap generate-xcompose <path> [--config <path>]\n")
+		_, _ = fmt.Fprintf(fs.Output(), "Usage: kmap generate-xcompose --output <path> [--config <path>]\n")
+		_, _ = fmt.Fprintf(fs.Output(), "   or: kmap generate-xcompose <path> [--config <path>]\n")
 		fs.PrintDefaults()
 	}
 
@@ -140,9 +140,9 @@ func runGenerateXComposeCommand(args []string) error {
 }
 
 func printTopLevelUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: kmap <command> [flags]")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Commands:")
+	_, _ = fmt.Fprintln(w, "Usage: kmap <command> [flags]")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Commands:")
 
 	keys := make([]string, 0, len(commands))
 	for k := range commands {
@@ -152,8 +152,8 @@ func printTopLevelUsage(w io.Writer) {
 
 	for _, k := range keys {
 		cmd := commands[k]
-		fmt.Fprintf(w, "  %-18s %s\n", cmd.Name, cmd.Description)
+		_, _ = fmt.Fprintf(w, "  %-18s %s\n", cmd.Name, cmd.Description)
 	}
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Run `kmap <command> -h` for command-specific flags.")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Run `kmap <command> -h` for command-specific flags.")
 }

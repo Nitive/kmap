@@ -398,14 +398,15 @@ func TestCapsAllMappings(t *testing.T) {
 			})
 
 			var want []emittedKey
-			if action.Kind == config.MappingRemap {
+			switch action.Kind {
+			case config.MappingRemap:
 				want = []emittedKey{
 					evt(action.RemapCode, 1),
 					evt(action.RemapCode, 0),
 				}
-			} else if action.Kind == config.MappingChord {
+			case config.MappingChord:
 				want = chordExpectedEvents(action.ChordMods, action.ChordKey)
-			} else {
+			default:
 				t.Fatalf("unexpected caps mapping kind: %d", action.Kind)
 			}
 

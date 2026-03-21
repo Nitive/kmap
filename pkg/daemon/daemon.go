@@ -31,10 +31,6 @@ type inputDevice interface {
 	CapsLockEnabled() (bool, error)
 }
 
-type eventMapper interface {
-	// mapper logic
-}
-
 type outputDevice interface {
 	EmitKey(code uint16, value int32) error
 	TapKey(code uint16, delay time.Duration) error

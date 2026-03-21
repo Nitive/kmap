@@ -73,7 +73,9 @@ func runSetupKeymap(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open input device %s: %w", *devicePath, err)
 	}
-	defer in.Close()
+	defer func() {
+		_ = in.Close()
+	}()
 
 	grabFn := func(enable bool) error {
 		if !*grab {
@@ -164,10 +166,10 @@ func captureLayout(in io.Reader, out io.Writer, logicalOrder []string, grabFn fu
 	captured := make(map[string]uint16, len(logicalOrder))
 	usedCodes := make(map[uint16]string, len(logicalOrder))
 
-	fmt.Fprintf(out, "Press each requested key once. Ctrl+C aborts.\n\n")
+	_, _ = fmt.Fprintf(out, "Press each requested key once. Ctrl+C aborts.\n\n")
 
 	for i, logical := range logicalOrder {
-		fmt.Fprintf(out, "[%2d/%2d] Press %-5s: ", i+1, len(logicalOrder), logical)
+		_, _ = fmt.Fprintf(out, "[%2d/%2d] Press %-5s: ", i+1, len(logicalOrder), logical)
 		code, err := input.WaitForNextKeyPress(in)
 		if err != nil {
 			if interrupted.Load() {
@@ -177,9 +179,9 @@ func captureLayout(in io.Reader, out io.Writer, logicalOrder []string, grabFn fu
 		}
 
 		if prev, exists := usedCodes[code]; exists {
-			fmt.Fprintf(out, "%d (%s) [duplicate of %s]\n", code, config.KeyName(code), prev)
+			_, _ = fmt.Fprintf(out, "%d (%s) [duplicate of %s]\n", code, config.KeyName(code), prev)
 		} else {
-			fmt.Fprintf(out, "%d (%s)\n", code, config.KeyName(code))
+			_, _ = fmt.Fprintf(out, "%d (%s)\n", code, config.KeyName(code))
 		}
 
 		captured[logical] = code
@@ -194,7 +196,9 @@ func writeLayoutJSON(path string, layout layoutFile) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")

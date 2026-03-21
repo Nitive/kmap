@@ -9,6 +9,8 @@ Use Go `1.26.1`, which is pinned in `go.mod` and `mise.toml`.
 - `mise install` installs the pinned Go toolchain.
 - `make build` compiles `./cmd` into `./bin/kmap`.
 - `./bin/kmap start --config ./kmap.yaml` runs the remapping daemon locally.
+- `make fmt` runs `golangci-lint fmt` with `gofmt`.
+- `make lint` runs `golangci-lint` through `mise` against `./...`.
 - `make test` runs the full Go test suite with `go test ./...`.
 - `make test-coverage` writes `tmp/coverage.out` and `tmp/coverage.html`.
 - `make restart` rebuilds, regenerates `~/.XCompose`, and restarts the systemd service.
