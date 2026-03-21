@@ -28,30 +28,26 @@ mappings:
     to_symbol: "."
   Alt-R:
     to_symbol: +
-  Alt-I:
-    to_symbol: ↑
   Alt-P:
     to_symbol: —
   Alt-LeftBrace:
     to_symbol: /
-  Alt-S:
+  Alt-D:
     to_symbol: "="
-  Alt-F:
-    to_symbol: ü
   Alt-H:
     to_symbol: "-"
+  Alt-I:
+    to_symbol: ↑
   Alt-J:
     to_symbol: ←
   Alt-K:
     to_symbol: ↓
   Alt-L:
     to_symbol: →
-  Alt-Semicolon:
-    to_symbol: ";"
-  Alt-Apostrophe:
-    to_symbol: "\\"
   Alt-Z:
     to_symbol: ":"
+  # Alt-Shift-Z:
+  #   to_symbol: ";"
   Alt-X:
     to_symbol: "?"
   Alt-V:
@@ -66,6 +62,32 @@ mappings:
     to_symbol: "|"
   Alt-Space:
     to_symbol: " "
+
+  # Currency
+  Alt-O:
+    to_symbol: ₽
+  Alt-G:
+    to_symbol: $
+  # Alt-Shift-D:
+  #   to_symbol: €
+
+  # German
+  Alt-A:
+    to_symbol: ä
+  # Alt-Shift-A:
+  #   to_symbol: Ä
+  Alt-S:
+    to_symbol: ö
+  # Alt-Shift-O:
+  #   to_symbol: Ö
+  Alt-F:
+    to_symbol: ü
+  # Alt-Shift-F:
+  #   to_symbol: Ü
+  Alt-Semicolon:
+    to_symbol: ß
+  # Alt-Shift-Semicolon:
+  #   to_symbol: ẞ
 
   # Caps layer (navigation + app shortcuts)
   Caps-W:
