@@ -8,5 +8,4 @@ User=root
 Environment="KEYBOARD_DEVICE=/dev/input/by-id/usb-04d9_USB-HID_Keyboard-event-kbd"
 
 [Install]
-DefaultInstance=config
 WantedBy=multi-user.target
