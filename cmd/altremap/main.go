@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -739,9 +738,9 @@ func (r *remapper) handleKey(code uint16, value int32) error {
 	return r.out.emitKey(code, value)
 }
 
-func readInputEvent(f *os.File) (inputEvent, error) {
+func readInputEvent(r io.Reader) (inputEvent, error) {
 	var ev inputEvent
-	err := binary.Read(f, binary.LittleEndian, &ev)
+	err := binary.Read(r, binary.LittleEndian, &ev)
 	return ev, err
 }
 
@@ -823,18 +822,7 @@ func run(devicePath string, configPath string, composeDelay time.Duration, grab 
 }
 
 func main() {
-	devicePath := flag.String("device", defaultDevicePath, "input keyboard device path")
-	configPath := flag.String("config", "altremap.yaml", "optional YAML config file path")
-	composeDelay := flag.Duration("compose-delay", 5*time.Millisecond, "delay between compose key taps")
-	grab := flag.Bool("grab", true, "grab input device so physical events are not duplicated")
-	verbose := flag.Bool("verbose", false, "enable verbose logs")
-	flag.Parse()
-
-	if *composeDelay < 0 {
-		log.Fatalf("compose-delay must be >= 0")
-	}
-
-	if err := run(*devicePath, *configPath, *composeDelay, *grab, *verbose); err != nil {
+	if err := runCLI(os.Args[1:]); err != nil {
 		log.Fatalf("altremap failed: %v", err)
 	}
 }
