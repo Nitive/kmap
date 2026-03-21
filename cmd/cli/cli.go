@@ -17,6 +17,7 @@ var (
 	runStartFn       = runStart
 	runSetupKeymapFn = runSetupKeymap
 	generateFn       = xcompose.GenerateFile
+	daemonStartFn    = daemon.Start
 )
 
 type cliCommand struct {
@@ -69,7 +70,7 @@ func Run(args []string) error {
 }
 
 func runStart(devicePath string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
-	return daemon.Start(daemon.StartOptions{
+	return daemonStartFn(daemon.StartOptions{
 		DeviceOverride: devicePath,
 		ConfigPath:     configPath,
 		ComposeDelay:   composeDelay,
