@@ -22,9 +22,11 @@
 
 (defalias
   caps (layer-toggle caps)
-  alt  (around (cmd-button "xkblayout-state print '%c' > /home/nitive/.cache/kmonad/current-layout && xkblayout-state set 2"
-                           "cat /home/nitive/.cache/kmonad/current-layout | xargs xkblayout-state set")
-               (around (layer-toggle alt) alt))
+  alt-l (around (layer-toggle alt-l) lalt)
+  alt-r (around (layer-toggle alt-r) ralt)
+  a-lc (around (layer-toggle default) lctl)
+  a-lm (around (layer-toggle default) lmet)
+  a-rc (around (layer-toggle default) rctl)
   clse C-S-,
   a-1p M-C-A-S-r ;; 1password
   a-fi M-C-A-S-n ;; firefox
@@ -43,7 +45,7 @@
   tab   q     w     e     r     t     y     u     i     o     p     [     ]     \
   @caps a     s     d     f     g     h     j     k     l     ;     '     ret
   lsft  z     x     c     v     b     n     m     ,     .     /     rsft
-  lctl  lmet  lalt             spc                ralt  rctl
+  lctl  lmet  @alt-l           spc                @alt-r rctl
 )
 
 (deflayer caps
@@ -55,38 +57,73 @@
 )
 
 (defalias
-  → #((release-only alt) →)
-  ← #((release-only alt) ←)
-  ↑ #((release-only alt) slck | ^)
-  ↓ #((release-only alt) slck | v)
-  « #((release-only alt) «)
-  » #((release-only alt) »)
-  “ #((release-only alt) “)
-  ” #((release-only alt) ”)
-  / #((release-only alt) /)
-  : #((release-only alt) :)
-  ? #((release-only alt) ?)
-  \ #((release-only alt) \\)
-  ~ #((release-only alt) ~)
-  × #((release-only alt) ×)
-  = #((release-only alt) =)
-  ` #((release-only alt) `)
-  , #((release-only alt) ,)
-  . #((release-only alt) .)
-  + #((release-only alt) +)
-  ; #((release-only alt) ;)
-  ü #((release-only alt) ü)
-  nobreakspace #((release-only alt) slck spc spc)
-  em #((release-only alt) slck - - -) ;; em dash
-  min #(slck - \_) ;; minus (only works without releasing alt for some reason)
-  hyp #((release-only alt) -) ;; hyphen
+  ;; Layout-agnostic compose codes. See ~/.XCompose (22xx namespace).
+  l→ #((release-only lalt) slck 2 2 0 1 (press-only lalt)) ;; 2201 -> →
+  l← #((release-only lalt) slck 2 2 0 2 (press-only lalt)) ;; 2202 -> ←
+  l↑ #((release-only lalt) slck 2 2 0 3 (press-only lalt)) ;; 2203 -> ↑
+  l↓ #((release-only lalt) slck 2 2 0 4 (press-only lalt)) ;; 2204 -> ↓
+  l« #((release-only lalt) slck 2 2 0 5 (press-only lalt)) ;; 2205 -> «
+  l» #((release-only lalt) slck 2 2 0 6 (press-only lalt)) ;; 2206 -> »
+  l“ #((release-only lalt) slck 2 2 0 7 (press-only lalt)) ;; 2207 -> “
+  l” #((release-only lalt) slck 2 2 0 8 (press-only lalt)) ;; 2208 -> ”
+  l/ #((release-only lalt) slck 2 2 0 9 (press-only lalt)) ;; 2209 -> /
+  l: #((release-only lalt) slck 2 2 1 0 (press-only lalt)) ;; 2210 -> :
+  l? #((release-only lalt) slck 2 2 1 1 (press-only lalt)) ;; 2211 -> ?
+  l− #((release-only lalt) slck 2 2 1 2 (press-only lalt)) ;; 2212 -> −
+  l× #((release-only lalt) slck 2 2 1 3 (press-only lalt)) ;; 2213 -> ×
+  l= #((release-only lalt) slck 2 2 1 4 (press-only lalt)) ;; 2214 -> =
+  l` #((release-only lalt) slck 2 2 1 5 (press-only lalt)) ;; 2215 -> `
+  l, #((release-only lalt) slck 2 2 1 6 (press-only lalt)) ;; 2216 -> ,
+  l. #((release-only lalt) slck 2 2 1 7 (press-only lalt)) ;; 2217 -> .
+  l+ #((release-only lalt) slck 2 2 1 8 (press-only lalt)) ;; 2218 -> +
+  l; #((release-only lalt) slck 2 2 1 9 (press-only lalt)) ;; 2219 -> ;
+  lü #((release-only lalt) slck 2 2 2 0 (press-only lalt)) ;; 2220 -> ü
+  lnbsp #((release-only lalt) slck 2 2 2 1 (press-only lalt)) ;; 2221 -> NBSP
+  l— #((release-only lalt) slck 2 2 2 2 (press-only lalt)) ;; 2222 -> —
+  l- #((release-only lalt) slck 2 2 2 3 (press-only lalt)) ;; 2223 -> -
+  l\ #((release-only lalt) slck 2 2 2 4 (press-only lalt)) ;; 2224 -> \
+  l~ #((release-only lalt) slck 2 2 2 5 (press-only lalt)) ;; 2225 -> ~
+
+  r→ #((release-only ralt) slck 2 2 0 1 (press-only ralt)) ;; 2201 -> →
+  r← #((release-only ralt) slck 2 2 0 2 (press-only ralt)) ;; 2202 -> ←
+  r↑ #((release-only ralt) slck 2 2 0 3 (press-only ralt)) ;; 2203 -> ↑
+  r↓ #((release-only ralt) slck 2 2 0 4 (press-only ralt)) ;; 2204 -> ↓
+  r« #((release-only ralt) slck 2 2 0 5 (press-only ralt)) ;; 2205 -> «
+  r» #((release-only ralt) slck 2 2 0 6 (press-only ralt)) ;; 2206 -> »
+  r“ #((release-only ralt) slck 2 2 0 7 (press-only ralt)) ;; 2207 -> “
+  r” #((release-only ralt) slck 2 2 0 8 (press-only ralt)) ;; 2208 -> ”
+  r/ #((release-only ralt) slck 2 2 0 9 (press-only ralt)) ;; 2209 -> /
+  r: #((release-only ralt) slck 2 2 1 0 (press-only ralt)) ;; 2210 -> :
+  r? #((release-only ralt) slck 2 2 1 1 (press-only ralt)) ;; 2211 -> ?
+  r− #((release-only ralt) slck 2 2 1 2 (press-only ralt)) ;; 2212 -> −
+  r× #((release-only ralt) slck 2 2 1 3 (press-only ralt)) ;; 2213 -> ×
+  r= #((release-only ralt) slck 2 2 1 4 (press-only ralt)) ;; 2214 -> =
+  r` #((release-only ralt) slck 2 2 1 5 (press-only ralt)) ;; 2215 -> `
+  r, #((release-only ralt) slck 2 2 1 6 (press-only ralt)) ;; 2216 -> ,
+  r. #((release-only ralt) slck 2 2 1 7 (press-only ralt)) ;; 2217 -> .
+  r+ #((release-only ralt) slck 2 2 1 8 (press-only ralt)) ;; 2218 -> +
+  r; #((release-only ralt) slck 2 2 1 9 (press-only ralt)) ;; 2219 -> ;
+  rü #((release-only ralt) slck 2 2 2 0 (press-only ralt)) ;; 2220 -> ü
+  rnbsp #((release-only ralt) slck 2 2 2 1 (press-only ralt)) ;; 2221 -> NBSP
+  r— #((release-only ralt) slck 2 2 2 2 (press-only ralt)) ;; 2222 -> —
+  r- #((release-only ralt) slck 2 2 2 3 (press-only ralt)) ;; 2223 -> -
+  r\ #((release-only ralt) slck 2 2 2 4 (press-only ralt)) ;; 2224 -> \
+  r~ #((release-only ralt) slck 2 2 2 5 (press-only ralt)) ;; 2225 -> ~
 )
 
 
-(deflayer alt
-  _     1     2     3     4     5     6     7     8     @«    @»    @“    @”    _ 
-  _     @`    @,   @.     @+    _     _     _     @↑    _     @em   @/    _     _ 
-  _     _     @=    _     @ü    _     @hyp  @←    @↓    @→    @;    \_    _
-  _     @:    @?    _     @~    @×    @\    @min  _     |     _     _
-  _     _     _           @nobreakspace           _     _ 
+(deflayer alt-l
+  _     1     2     3     4     5     6     7     8     @l«   @l»   @l“   @l”   _
+  _     @l`   @l,   @l.   @l+   _     _     _     @l↑   _     @l—   @l/   _     _
+  _     _     @l=   _     @lü   _     @l-   @l←   @l↓   @l→   @l;   \_    _
+  _     @l:   @l?   _     @l~   @l×   @l\   @l−   _     |     _     _
+  @a-lc @a-lm _           @lnbsp           _     @a-rc
+)
+
+(deflayer alt-r
+  _     1     2     3     4     5     6     7     8     @r«   @r»   @r“   @r”   _
+  _     @r`   @r,   @r.   @r+   _     _     _     @r↑   _     @r—   @r/   _     _
+  _     _     @r=   _     @rü   _     @r-   @r←   @r↓   @r→   @r;   \_    _
+  _     @r:   @r?   _     @r~   @r×   @r\   @r−   _     |     _     _
+  @a-lc @a-lm _           @rnbsp           _     @a-rc
 )

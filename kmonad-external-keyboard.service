@@ -4,7 +4,10 @@ ExecStart=/home/nitive/Develop/keyboard/kmonad-start.sh
 Restart=always
 RestartSec=3
 Nice=-20
-User=root
+User=nitive
+Group=input
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="WAYLAND_DISPLAY=wayland-0"
 Environment="KEYBOARD_DEVICE=/dev/input/by-id/usb-04d9_USB-HID_Keyboard-event-kbd"
 
 [Install]
