@@ -49,31 +49,40 @@ const (
 	keyW          = 17
 	keyE          = 18
 	keyR          = 19
+	keyT          = 20
+	keyY          = 21
+	keyU          = 22
 	keyI          = 23
 	keyO          = 24
 	keyP          = 25
 	keyLeftBrace  = 26
+	keyRightBrace = 27
 	keyEnter      = 28
 	keyLeftCtrl   = 29
 	keyA          = 30
 	keyS          = 31
+	keyD          = 32
 	keyF          = 33
+	keyG          = 34
 	keyH          = 35
 	keyJ          = 36
 	keyK          = 37
 	keyL          = 38
 	keySemicolon  = 39
 	keyApostrophe = 40
+	keyGrv        = 41
 	keyBackslash  = 43
 	keyLeftShift  = 42
 	keyZ          = 44
 	keyX          = 45
+	keyC          = 46
 	keyV          = 47
 	keyB          = 48
 	keyN          = 49
 	keyM          = 50
 	keyComma      = 51
 	keyDot        = 52
+	keySlash      = 53
 	keyRightShift = 54
 	keyLeftAlt    = 56
 	keySpace      = 57
@@ -364,24 +373,61 @@ type remapper struct {
 	out          keyEmitter
 	composeDelay time.Duration
 	verbose      bool
+	suppressAlt  bool
+	suppressCaps bool
+	altMappings  map[uint16]compiledMapping
+	capsMappings map[uint16]compiledMapping
 
 	altActive  bool
 	altCode    uint16
 	altEmitted bool
 	capsActive bool
 
-	swallowed map[uint16]bool
-	modDown   map[uint16]bool
+	activeRemapped map[uint16]uint16
+	swallowed      map[uint16]bool
+	modDown        map[uint16]bool
 }
 
 func newRemapper(out keyEmitter, composeDelay time.Duration, verbose bool) *remapper {
-	return &remapper{
-		out:          out,
-		composeDelay: composeDelay,
-		verbose:      verbose,
-		swallowed:    make(map[uint16]bool),
-		modDown:      make(map[uint16]bool),
+	return newRemapperWithConfig(out, composeDelay, verbose, defaultRuntimeConfig())
+}
+
+func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose bool, cfg runtimeConfig) *remapper {
+	altMappings := make(map[uint16]compiledMapping, len(cfg.altMappings))
+	for code, mapping := range cfg.altMappings {
+		altMappings[code] = cloneCompiledMapping(mapping)
 	}
+	capsMappings := make(map[uint16]compiledMapping, len(cfg.capsMappings))
+	for code, mapping := range cfg.capsMappings {
+		capsMappings[code] = cloneCompiledMapping(mapping)
+	}
+
+	return &remapper{
+		out:            out,
+		composeDelay:   composeDelay,
+		verbose:        verbose,
+		suppressAlt:    cfg.suppressAlt,
+		suppressCaps:   cfg.suppressCaps,
+		altMappings:    altMappings,
+		capsMappings:   capsMappings,
+		activeRemapped: make(map[uint16]uint16),
+		swallowed:      make(map[uint16]bool),
+		modDown:        make(map[uint16]bool),
+	}
+}
+
+func cloneCompiledMapping(m compiledMapping) compiledMapping {
+	if len(m.chordMods) > 0 {
+		cloned := make([]uint16, len(m.chordMods))
+		copy(cloned, m.chordMods)
+		m.chordMods = cloned
+	}
+	if len(m.keySeq) > 0 {
+		cloned := make([]uint16, len(m.keySeq))
+		copy(cloned, m.keySeq)
+		m.keySeq = cloned
+	}
+	return m
 }
 
 func (r *remapper) logf(format string, args ...any) {
@@ -391,10 +437,19 @@ func (r *remapper) logf(format string, args ...any) {
 }
 
 func (r *remapper) cleanup() error {
+	var firstErr error
 	if r.altActive && r.altEmitted {
-		return r.out.emitKey(r.altCode, 0)
+		if err := r.out.emitKey(r.altCode, 0); err != nil {
+			firstErr = err
+		}
 	}
-	return nil
+	for srcCode, remapCode := range r.activeRemapped {
+		if err := r.out.emitKey(remapCode, 0); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		delete(r.activeRemapped, srcCode)
+	}
+	return firstErr
 }
 
 func isAlt(code uint16) bool {
@@ -478,6 +533,11 @@ func (r *remapper) emitSymbol(action symbolAction) error {
 }
 
 func (r *remapper) handleAltKey(code uint16, value int32) error {
+	if !r.suppressAlt {
+		r.altActive = false
+		r.altEmitted = false
+		return r.out.emitKey(code, value)
+	}
 	if value == 2 {
 		return nil
 	}
@@ -488,7 +548,6 @@ func (r *remapper) handleAltKey(code uint16, value int32) error {
 			r.altActive = true
 			r.altCode = code
 			r.altEmitted = false
-			r.swallowed = make(map[uint16]bool)
 			r.logf("alt down pending (%d)", code)
 			return nil
 		}
@@ -508,7 +567,6 @@ func (r *remapper) handleAltKey(code uint16, value int32) error {
 			}
 			r.altActive = false
 			r.altEmitted = false
-			r.swallowed = make(map[uint16]bool)
 			r.logf("alt released (%d)", code)
 			return nil
 		}
@@ -522,33 +580,67 @@ func (r *remapper) handleAltKey(code uint16, value int32) error {
 	}
 }
 
-func (r *remapper) handlePendingAltKey(code uint16, value int32) error {
-	if value == 0 {
-		if r.swallowed[code] {
-			delete(r.swallowed, code)
-			return nil
+func (r *remapper) emitKeySequence(keys []uint16) error {
+	for _, keyCode := range keys {
+		if err := r.out.tapKey(keyCode, r.composeDelay); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *remapper) handleMappedAction(code uint16, value int32, mapping compiledMapping, altLayer bool) error {
+	switch mapping.kind {
+	case mappingPassthrough:
+		if altLayer {
+			if err := r.emitAltDownIfNeeded(); err != nil {
+				return err
+			}
 		}
 		return r.out.emitKey(code, value)
-	}
 
-	if value == 2 {
-		if r.swallowed[code] {
+	case mappingSymbol:
+		if value != 1 {
 			return nil
 		}
-		return r.out.emitKey(code, value)
-	}
-
-	if value != 1 {
-		return nil
-	}
-
-	if action, ok := symbolMap[code]; ok && !r.anyNonAltModifierDown() {
-		r.logf("symbol key %d mapped", code)
 		r.swallowed[code] = true
-		return r.emitSymbol(action)
+		return r.emitSymbol(mapping.symbol)
+
+	case mappingRemap:
+		if value == 1 {
+			r.activeRemapped[code] = mapping.remapCode
+		}
+		if value == 0 {
+			delete(r.activeRemapped, code)
+		}
+		return r.out.emitKey(mapping.remapCode, value)
+
+	case mappingChord:
+		if value != 1 {
+			return nil
+		}
+		r.swallowed[code] = true
+		return r.emitChord(mapping.chordMods, mapping.chordKey)
+
+	case mappingKeySeq:
+		if value != 1 {
+			return nil
+		}
+		r.swallowed[code] = true
+		return r.emitKeySequence(mapping.keySeq)
+
+	default:
+		return fmt.Errorf("unsupported mapping kind %d", mapping.kind)
+	}
+}
+
+func (r *remapper) handlePendingAltKey(code uint16, value int32) error {
+	if mapping, ok := r.altMappings[code]; ok && !r.anyNonAltModifierDown() {
+		r.logf("alt key %d mapped via config kind=%d", code, mapping.kind)
+		return r.handleMappedAction(code, value, mapping, true)
 	}
 
-	// Not a symbol mapping (or modifier held) -> become real Alt passthrough.
+	// Not an Alt mapping (or another modifier held): become real Alt passthrough.
 	if err := r.emitAltDownIfNeeded(); err != nil {
 		return err
 	}
@@ -576,6 +668,10 @@ func (r *remapper) emitChord(mods []uint16, targetCode uint16) error {
 }
 
 func (r *remapper) handleCapsKey(value int32) error {
+	if !r.suppressCaps {
+		r.capsActive = false
+		return r.out.emitKey(keyCapsLock, value)
+	}
 	if value == 2 {
 		return nil
 	}
@@ -591,21 +687,13 @@ func (r *remapper) handleCapsKey(value int32) error {
 }
 
 func (r *remapper) handleCapsLayerKey(code uint16, value int32) error {
-	action, ok := capsActionMap[code]
+	mapping, ok := r.capsMappings[code]
 	if !ok {
 		return r.out.emitKey(code, value)
 	}
 
-	if action.remapCode != 0 {
-		return r.out.emitKey(action.remapCode, value)
-	}
-
-	// Chord actions fire once on press and swallow release/repeat.
-	if value != 1 {
-		return nil
-	}
-	r.logf("caps chord key %d mapped", code)
-	return r.emitChord(action.chordMods, action.chordKey)
+	r.logf("caps key %d mapped via config kind=%d", code, mapping.kind)
+	return r.handleMappedAction(code, value, mapping, false)
 }
 
 func (r *remapper) handleKey(code uint16, value int32) error {
@@ -616,6 +704,20 @@ func (r *remapper) handleKey(code uint16, value int32) error {
 		case 0:
 			r.modDown[code] = false
 		}
+	}
+
+	if remapCode, ok := r.activeRemapped[code]; ok {
+		if value == 0 {
+			delete(r.activeRemapped, code)
+		}
+		return r.out.emitKey(remapCode, value)
+	}
+
+	if r.swallowed[code] {
+		if value == 0 {
+			delete(r.swallowed, code)
+		}
+		return nil
 	}
 
 	if isAlt(code) {
@@ -643,12 +745,17 @@ func readInputEvent(f *os.File) (inputEvent, error) {
 	return ev, err
 }
 
-func run(devicePath string, composeDelay time.Duration, grab bool, verbose bool) error {
+func run(devicePath string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
 	in, err := os.Open(devicePath)
 	if err != nil {
 		return fmt.Errorf("open input device %s: %w", devicePath, err)
 	}
 	defer in.Close()
+
+	cfg, err := loadRuntimeConfig(configPath)
+	if err != nil {
+		return err
+	}
 
 	inFD := int(in.Fd())
 	if grab {
@@ -666,7 +773,7 @@ func run(devicePath string, composeDelay time.Duration, grab bool, verbose bool)
 	}
 	defer out.close()
 
-	rem := newRemapper(out, composeDelay, verbose)
+	rem := newRemapperWithConfig(out, composeDelay, verbose, cfg)
 	defer rem.cleanup()
 
 	var stopping atomic.Bool
@@ -683,6 +790,9 @@ func run(devicePath string, composeDelay time.Duration, grab bool, verbose bool)
 	log.Printf("altremap started on %s", devicePath)
 	if grab {
 		log.Printf("input device is grabbed")
+	}
+	if configPath != "" {
+		log.Printf("config path: %s", configPath)
 	}
 
 	for {
@@ -714,6 +824,7 @@ func run(devicePath string, composeDelay time.Duration, grab bool, verbose bool)
 
 func main() {
 	devicePath := flag.String("device", defaultDevicePath, "input keyboard device path")
+	configPath := flag.String("config", "altremap.yaml", "optional YAML config file path")
 	composeDelay := flag.Duration("compose-delay", 5*time.Millisecond, "delay between compose key taps")
 	grab := flag.Bool("grab", true, "grab input device so physical events are not duplicated")
 	verbose := flag.Bool("verbose", false, "enable verbose logs")
@@ -723,7 +834,7 @@ func main() {
 		log.Fatalf("compose-delay must be >= 0")
 	}
 
-	if err := run(*devicePath, *composeDelay, *grab, *verbose); err != nil {
+	if err := run(*devicePath, *configPath, *composeDelay, *grab, *verbose); err != nil {
 		log.Fatalf("altremap failed: %v", err)
 	}
 }

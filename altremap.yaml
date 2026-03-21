@@ -1,0 +1,98 @@
+# Which layer keys should delay their keydown until the next key event.
+suppress_keydown:
+  - Caps
+  - Alt
+
+# Full mapping set.
+mappings:
+  # Alt layer (symbols)
+  Alt-Tab:
+    passthrough: true
+  Alt-9:
+    to_symbol: «
+  Alt-0:
+    to_symbol: »
+  Alt-Minus:
+    to_symbol: “
+  Alt-Equal:
+    to_symbol: ”
+  Alt-Q:
+    to_symbol: "`"
+  Alt-W:
+    to_symbol: ","
+  Alt-E:
+    to_symbol: "."
+  Alt-R:
+    to_symbol: +
+  Alt-I:
+    to_symbol: ↑
+  Alt-P:
+    to_symbol: —
+  Alt-LeftBrace:
+    to_symbol: /
+  Alt-S:
+    to_symbol: "="
+  Alt-F:
+    to_symbol: ü
+  Alt-H:
+    to_symbol: "-"
+  Alt-J:
+    to_symbol: ←
+  Alt-K:
+    to_symbol: ↓
+  Alt-L:
+    to_symbol: →
+  Alt-Semicolon:
+    to_symbol: ";"
+  Alt-Apostrophe:
+    to_symbol: "\\"
+  Alt-Z:
+    to_symbol: ":"
+  Alt-X:
+    to_symbol: "?"
+  Alt-V:
+    to_symbol: "~"
+  Alt-B:
+    to_symbol: ×
+  Alt-N:
+    to_symbol: "\\"
+  Alt-M:
+    to_symbol: −
+  Alt-Dot:
+    to_symbol: "|"
+  Alt-Space:
+    to_symbol: NBSP
+
+  # Caps layer (navigation + app shortcuts)
+  Caps-W:
+    to_chord: Ctrl-Shift-Comma
+  Caps-R:
+    to_chord: Meta-Ctrl-Alt-Shift-R
+  Caps-I:
+    to_keys: [Up]
+  Caps-O:
+    to_chord: Meta-Ctrl-Alt-Shift-O
+  Caps-P:
+    to_chord: Meta-Ctrl-Alt-Shift-P
+  Caps-A:
+    to_chord: Meta-Ctrl-Alt-Shift-A
+  Caps-H:
+    to_keys: [Backspace]
+  Caps-J:
+    to_keys: [Left]
+  Caps-K:
+    to_keys: [Down]
+  Caps-L:
+    to_keys: [Right]
+  Caps-Semicolon:
+    to_chord: Meta-Ctrl-Alt-Shift-Semicolon
+  Caps-Apostrophe:
+    to_chord: Meta-Ctrl-Alt-Shift-Apostrophe
+  Caps-N:
+    to_chord: Meta-Ctrl-Alt-Shift-N
+  Caps-M:
+    to_keys: [Esc]
+  Caps-Comma:
+    to_chord: Meta-Ctrl-Alt-Shift-Comma
+  Caps-Dot:
+    to_chord: Meta-Ctrl-Alt-Shift-Dot
