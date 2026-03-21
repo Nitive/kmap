@@ -4,7 +4,63 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"keyboard/pkg/daemon"
 )
+
+func TestRunStartForwardsOptions(t *testing.T) {
+	orig := daemonStartFn
+	defer func() {
+		daemonStartFn = orig
+	}()
+
+	var got daemon.StartOptions
+	daemonStartFn = func(opts daemon.StartOptions) error {
+		got = opts
+		return nil
+	}
+
+	err := runStart("/dev/input/test-kbd", "custom.yaml", 2*time.Millisecond, false, true)
+	if err != nil {
+		t.Fatalf("runStart: %v", err)
+	}
+
+	if got.DeviceOverride != "/dev/input/test-kbd" {
+		t.Fatalf("DeviceOverride mismatch: %q", got.DeviceOverride)
+	}
+	if got.ConfigPath != "custom.yaml" {
+		t.Fatalf("ConfigPath mismatch: %q", got.ConfigPath)
+	}
+	if got.ComposeDelay != 2*time.Millisecond {
+		t.Fatalf("ComposeDelay mismatch: %s", got.ComposeDelay)
+	}
+	if got.Grab {
+		t.Fatalf("Grab should be false")
+	}
+	if !got.Verbose {
+		t.Fatalf("Verbose should be true")
+	}
+}
+
+func TestRunGenerateXComposeCommandRequiresOutputPath(t *testing.T) {
+	err := runGenerateXComposeCommand(nil)
+	if err == nil {
+		t.Fatalf("expected missing output error")
+	}
+	if !strings.Contains(err.Error(), "output path is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunGenerateXComposeCommandRejectsExtraPositionalArgs(t *testing.T) {
+	err := runGenerateXComposeCommand([]string{"one", "two"})
+	if err == nil {
+		t.Fatalf("expected positional argument error")
+	}
+	if !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
 func TestRunCLIDispatchesSetupKeymapSubcommand(t *testing.T) {
 	origSetup := runSetupKeymapFn
