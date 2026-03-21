@@ -3,11 +3,40 @@ package cli
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"testing"
 	"time"
 
 	"keyboard/pkg/daemon/input"
 )
+
+func TestSetupKeymapCaptureLayout(t *testing.T) {
+	events := []input.RawEvent{
+		{Type: 0x01, Code: 30, Value: 1}, // A
+		{Type: 0x01, Code: 48, Value: 1}, // B
+	}
+	buf := encodeSetupKeymapEvents(t, events)
+	out := &bytes.Buffer{}
+	order := []string{"a", "b"}
+
+	var grabCalled bool
+	grabFn := func(enable bool) error {
+		grabCalled = true
+		return nil
+	}
+
+	captured, err := captureLayout(buf, out, order, grabFn)
+	if err != nil {
+		t.Fatalf("captureLayout: %v", err)
+	}
+
+	if !grabCalled {
+		t.Error("grabFn was not called")
+	}
+	if len(captured) != 2 || captured["a"] != 30 || captured["b"] != 48 {
+		t.Fatalf("unexpected captured: %+v", captured)
+	}
+}
 
 const (
 	setupKeymapTestKeyA         = 30

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -68,7 +69,20 @@ func runSetupKeymap(args []string) error {
 		name = filepath.Base(*devicePath)
 	}
 
-	captured, err := captureLayout(*devicePath, order, *grab)
+	in, err := os.Open(*devicePath)
+	if err != nil {
+		return fmt.Errorf("open input device %s: %w", *devicePath, err)
+	}
+	defer in.Close()
+
+	grabFn := func(enable bool) error {
+		if !*grab {
+			return nil
+		}
+		return input.Grab(int(in.Fd()), enable)
+	}
+
+	captured, err := captureLayout(in, os.Stdout, order, grabFn)
 	if err != nil {
 		return err
 	}
@@ -120,58 +134,52 @@ func buildLayout(name string, device string, order []string, captured map[string
 	}
 }
 
-func captureLayout(devicePath string, logicalOrder []string, grab bool) (map[string]uint16, error) {
-	in, err := os.Open(devicePath)
-	if err != nil {
-		return nil, fmt.Errorf("open input device %s: %w", devicePath, err)
+func captureLayout(in io.Reader, out io.Writer, logicalOrder []string, grabFn func(bool) error) (map[string]uint16, error) {
+	if err := grabFn(true); err != nil {
+		return nil, fmt.Errorf("grab input device: %w", err)
 	}
-	defer in.Close()
-
-	fd := int(in.Fd())
-	if grab {
-		if err := input.Grab(fd, true); err != nil {
-			return nil, fmt.Errorf("grab input device %s: %w", devicePath, err)
-		}
-		defer func() {
-			_ = input.Grab(fd, false)
-		}()
-	}
+	defer func() {
+		_ = grabFn(false)
+	}()
 
 	var interrupted atomic.Bool
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	done := make(chan struct{})
+	defer close(done)
+
 	go func() {
-		<-sigCh
-		interrupted.Store(true)
-		_ = in.Close()
+		select {
+		case <-sigCh:
+			interrupted.Store(true)
+			if closer, ok := in.(io.Closer); ok {
+				_ = closer.Close()
+			}
+		case <-done:
+		}
 	}()
 
 	captured := make(map[string]uint16, len(logicalOrder))
 	usedCodes := make(map[uint16]string, len(logicalOrder))
 
-	fmt.Printf("Capturing from %s\n", devicePath)
-	if grab {
-		fmt.Println("Input device is grabbed during capture.")
-	}
-	fmt.Println("Press each requested key once. Ctrl+C aborts.")
-	fmt.Println()
+	fmt.Fprintf(out, "Press each requested key once. Ctrl+C aborts.\n\n")
 
 	for i, logical := range logicalOrder {
-		fmt.Printf("[%2d/%2d] Press %-5s: ", i+1, len(logicalOrder), logical)
+		fmt.Fprintf(out, "[%2d/%2d] Press %-5s: ", i+1, len(logicalOrder), logical)
 		code, err := input.WaitForNextKeyPress(in)
 		if err != nil {
-			if interrupted.Load() || errors.Is(err, os.ErrClosed) {
+			if interrupted.Load() {
 				return nil, errors.New("capture interrupted")
 			}
 			return nil, fmt.Errorf("read input event: %w", err)
 		}
 
 		if prev, exists := usedCodes[code]; exists {
-			fmt.Printf("%d (%s) [duplicate of %s]\n", code, config.KeyName(code), prev)
+			fmt.Fprintf(out, "%d (%s) [duplicate of %s]\n", code, config.KeyName(code), prev)
 		} else {
-			fmt.Printf("%d (%s)\n", code, config.KeyName(code))
+			fmt.Fprintf(out, "%d (%s)\n", code, config.KeyName(code))
 		}
 
 		captured[logical] = code

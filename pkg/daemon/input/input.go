@@ -69,30 +69,46 @@ type Options struct {
 	Grab       bool
 }
 
+type ioctlCaller interface {
+	Ioctl(fd int, req uintptr, arg uintptr) error
+}
+
+type realIoctl struct{}
+
+func (realIoctl) Ioctl(fd int, req uintptr, arg uintptr) error {
+	return ioctl(fd, req, arg)
+}
+
 type Device struct {
 	path    string
-	file    *os.File
+	file    io.ReadCloser
 	fd      int
 	grabbed bool
+	ioctl   ioctlCaller
 
 	closeOnce sync.Once
 }
 
 func Start(opts Options) (*Device, <-chan event.KeyEvent, <-chan error, error) {
-	in, err := os.OpenFile(opts.DevicePath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	in, err := os.OpenFile(opts.DevicePath, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open input device %s: %w", opts.DevicePath, err)
 	}
 
+	return startWithFile(in, int(in.Fd()), opts, realIoctl{})
+}
+
+func startWithFile(file io.ReadCloser, fd int, opts Options, ic ioctlCaller) (*Device, <-chan event.KeyEvent, <-chan error, error) {
 	device := &Device{
-		path: opts.DevicePath,
-		file: in,
-		fd:   int(in.Fd()),
+		path:  opts.DevicePath,
+		file:  file,
+		fd:    fd,
+		ioctl: ic,
 	}
 
 	if opts.Grab {
-		if err := Grab(device.fd, true); err != nil {
-			_ = in.Close()
+		if err := device.Grab(true); err != nil {
+			_ = file.Close()
 			return nil, nil, nil, fmt.Errorf("grab input device %s: %w", opts.DevicePath, err)
 		}
 		device.grabbed = true
@@ -120,7 +136,7 @@ func (d *Device) Close() error {
 	var closeErr error
 	d.closeOnce.Do(func() {
 		if d.grabbed {
-			_ = Grab(d.fd, false)
+			_ = d.Grab(false)
 		}
 		closeErr = d.file.Close()
 	})
@@ -132,10 +148,18 @@ func (d *Device) CapsLockEnabled() (bool, error) {
 		return false, errors.New("nil device")
 	}
 	var leds [1]byte
-	if err := ioctl(d.fd, eviocgled, uintptr(unsafe.Pointer(&leds[0]))); err != nil {
+	if err := d.ioctl.Ioctl(d.fd, eviocgled, uintptr(unsafe.Pointer(&leds[0]))); err != nil {
 		return false, err
 	}
 	return (leds[0] & (1 << ledCapsLock)) != 0, nil
+}
+
+func (d *Device) Grab(enable bool) error {
+	value := int32(0)
+	if enable {
+		value = 1
+	}
+	return d.ioctl.Ioctl(d.fd, eviocgrab, uintptr(unsafe.Pointer(&value)))
 }
 
 func (d *Device) readLoop(eventsCh chan<- event.KeyEvent, errCh chan<- error) {
@@ -145,11 +169,7 @@ func (d *Device) readLoop(eventsCh chan<- event.KeyEvent, errCh chan<- error) {
 	for {
 		ev, err := ReadRawEvent(d.file)
 		if err != nil {
-			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-				time.Sleep(2 * time.Millisecond)
-				continue
-			}
-			if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+			if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) || errors.Is(err, syscall.EBADF) {
 				return
 			}
 			if errors.Is(err, syscall.EINTR) {

@@ -138,17 +138,17 @@ func TestComposeRuneKeySupportsHexLetters(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got, err := ComposeRuneKey(tc.ch)
+		got, err := composeRuneKey(tc.ch)
 		if err != nil {
-			t.Fatalf("ComposeRuneKey(%q): %v", tc.ch, err)
+			t.Fatalf("composeRuneKey(%q): %v", tc.ch, err)
 		}
 		if got != tc.want {
-			t.Fatalf("ComposeRuneKey(%q) mismatch: got=%d want=%d", tc.ch, got, tc.want)
+			t.Fatalf("composeRuneKey(%q) mismatch: got=%d want=%d", tc.ch, got, tc.want)
 		}
 	}
 
-	if _, err := ComposeRuneKey('-'); err == nil {
-		t.Fatalf("ComposeRuneKey('-') expected error")
+	if _, err := composeRuneKey('-'); err == nil {
+		t.Fatalf("composeRuneKey('-') expected error")
 	}
 }
 

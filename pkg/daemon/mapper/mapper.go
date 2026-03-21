@@ -135,7 +135,7 @@ func ComposeSequenceForRune(r rune) []uint16 {
 	return sequence
 }
 
-func ComposeRuneKey(ch rune) (uint16, error) {
+func composeRuneKey(ch rune) (uint16, error) {
 	if ch >= '0' && ch <= '9' {
 		keyCode, ok := composeDigitKey[ch]
 		if !ok {

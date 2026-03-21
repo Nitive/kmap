@@ -3,6 +3,7 @@ package output
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 	"time"
@@ -86,8 +87,20 @@ type uinputUserDev struct {
 	AbsFlat      [64]int32
 }
 
+type ioctlCaller interface {
+	Ioctl(fd int, req uintptr, arg uintptr) error
+}
+
+type realIoctl struct{}
+
+func (realIoctl) Ioctl(fd int, req uintptr, arg uintptr) error {
+	return ioctl(fd, req, arg)
+}
+
 type Keyboard struct {
-	f *os.File
+	f     io.WriteCloser
+	fd    int
+	ioctl ioctlCaller
 }
 
 func CreateVirtualKeyboard(name string) (*Keyboard, error) {
@@ -96,19 +109,22 @@ func CreateVirtualKeyboard(name string) (*Keyboard, error) {
 		return nil, fmt.Errorf("open %s: %w", uinputPath, err)
 	}
 
-	fd := int(f.Fd())
-	if err := ioctl(fd, uiSetEvBit, uintptr(evKey)); err != nil {
-		_ = f.Close()
+	return createVirtualKeyboardWithFile(f, int(f.Fd()), name, realIoctl{})
+}
+
+func createVirtualKeyboardWithFile(file io.WriteCloser, fd int, name string, ic ioctlCaller) (*Keyboard, error) {
+	if err := ic.Ioctl(fd, uiSetEvBit, uintptr(evKey)); err != nil {
+		_ = file.Close()
 		return nil, fmt.Errorf("UI_SET_EVBIT EV_KEY: %w", err)
 	}
-	if err := ioctl(fd, uiSetEvBit, uintptr(evSyn)); err != nil {
-		_ = f.Close()
+	if err := ic.Ioctl(fd, uiSetEvBit, uintptr(evSyn)); err != nil {
+		_ = file.Close()
 		return nil, fmt.Errorf("UI_SET_EVBIT EV_SYN: %w", err)
 	}
 
 	for code := 0; code <= 255; code++ {
-		if err := ioctl(fd, uiSetKeyBit, uintptr(code)); err != nil {
-			_ = f.Close()
+		if err := ic.Ioctl(fd, uiSetKeyBit, uintptr(code)); err != nil {
+			_ = file.Close()
 			return nil, fmt.Errorf("UI_SET_KEYBIT %d: %w", code, err)
 		}
 	}
@@ -122,20 +138,20 @@ func CreateVirtualKeyboard(name string) (*Keyboard, error) {
 		Version: 1,
 	}
 
-	if err := binary.Write(f, binary.LittleEndian, &dev); err != nil {
-		_ = f.Close()
+	if err := binary.Write(file, binary.LittleEndian, &dev); err != nil {
+		_ = file.Close()
 		return nil, fmt.Errorf("write uinput device: %w", err)
 	}
 
-	if err := ioctl(fd, uiDevCreate, 0); err != nil {
-		_ = f.Close()
+	if err := ic.Ioctl(fd, uiDevCreate, 0); err != nil {
+		_ = file.Close()
 		return nil, fmt.Errorf("UI_DEV_CREATE: %w", err)
 	}
 
 	// Give kernel/compositor a short moment to register the new keyboard.
 	time.Sleep(150 * time.Millisecond)
 
-	return &Keyboard{f: f}, nil
+	return &Keyboard{f: file, fd: fd, ioctl: ic}, nil
 }
 
 func (k *Keyboard) Close() error {
@@ -143,8 +159,7 @@ func (k *Keyboard) Close() error {
 		return nil
 	}
 
-	fd := int(k.f.Fd())
-	_ = ioctl(fd, uiDevDestroy, 0)
+	_ = k.ioctl.Ioctl(k.fd, uiDevDestroy, 0)
 	return k.f.Close()
 }
 

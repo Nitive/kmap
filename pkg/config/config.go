@@ -469,15 +469,6 @@ func ParseKeyName(name string) (uint16, error) {
 		return 0, errors.New("empty key name")
 	}
 
-	if len(token) == 1 {
-		ch := token[0]
-		if (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
-			if code, ok := keyCodeByName[token]; ok {
-				return code, nil
-			}
-		}
-	}
-
 	code, ok := keyCodeByName[token]
 	if !ok {
 		return 0, fmt.Errorf("unsupported key name %q", name)
@@ -486,21 +477,13 @@ func ParseKeyName(name string) (uint16, error) {
 }
 
 func normalizeToken(s string) string {
-	return strings.ToUpper(strings.TrimSpace(trimQuotes(s)))
-}
-
-func trimQuotes(s string) string {
-	s = trimASCIIWhitespace(s)
+	s = strings.Trim(s, " \t\r\n")
 	if len(s) >= 2 {
 		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
-			return s[1 : len(s)-1]
+			s = s[1 : len(s)-1]
 		}
 	}
-	return s
-}
-
-func trimASCIIWhitespace(s string) string {
-	return strings.Trim(s, " \t\r\n")
+	return strings.ToUpper(strings.Trim(s, " \t\r\n"))
 }
 
 func normalizeDevicePaths(paths []string) ([]string, error) {
@@ -511,7 +494,7 @@ func normalizeDevicePaths(paths []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(paths))
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
-		trimmed := trimASCIIWhitespace(path)
+		trimmed := strings.Trim(path, " \t\r\n")
 		if trimmed == "" {
 			return nil, errors.New("devices must not contain empty paths")
 		}
