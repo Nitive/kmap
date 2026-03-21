@@ -263,10 +263,10 @@ func TestRunGenerateXComposeSupportsPositionalOutput(t *testing.T) {
 
 func TestRunValidateConfigWithoutShortcutLayout(t *testing.T) {
 	origLoad := loadRuntimeFn
-	origShortcut := shortcutValidateFn
+	origSwitch := switchValidateFn
 	defer func() {
 		loadRuntimeFn = origLoad
-		shortcutValidateFn = origShortcut
+		switchValidateFn = origSwitch
 	}()
 
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -280,8 +280,8 @@ func TestRunValidateConfigWithoutShortcutLayout(t *testing.T) {
 		}
 		return config.DefaultRuntime(), nil
 	}
-	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
-		t.Fatalf("shortcutValidateFn should not be called without shortcut layout")
+	switchValidateFn = func(ctx context.Context, cfg config.Runtime) (shortcut.ValidationInfo, error) {
+		t.Fatalf("switchValidateFn should not be called without layout switching")
 		return shortcut.ValidationInfo{}, nil
 	}
 
@@ -296,10 +296,10 @@ func TestRunValidateConfigWithoutShortcutLayout(t *testing.T) {
 
 func TestRunValidateConfigWithShortcutLayout(t *testing.T) {
 	origLoad := loadRuntimeFn
-	origShortcut := shortcutValidateFn
+	origSwitch := switchValidateFn
 	defer func() {
 		loadRuntimeFn = origLoad
-		shortcutValidateFn = origShortcut
+		switchValidateFn = origSwitch
 	}()
 
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -312,14 +312,14 @@ func TestRunValidateConfigWithShortcutLayout(t *testing.T) {
 		cfg.ShortcutLayout = &config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"}
 		return cfg, nil
 	}
-	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
-		if target.Layout != "us" || target.Variant != "dvorak" {
-			t.Fatalf("unexpected target: %#v", target)
+	switchValidateFn = func(ctx context.Context, cfg config.Runtime) (shortcut.ValidationInfo, error) {
+		if cfg.ShortcutLayout == nil || cfg.ShortcutLayout.Layout != "us" || cfg.ShortcutLayout.Variant != "dvorak" {
+			t.Fatalf("unexpected config: %#v", cfg.ShortcutLayout)
 		}
 		return shortcut.ValidationInfo{
-			Current:     shortcut.LayoutInfo{Layout: "us"},
-			Target:      shortcut.LayoutInfo{Layout: "us", Variant: "dvorak"},
-			TargetIndex: 0,
+			Current:             shortcut.LayoutInfo{Layout: "us"},
+			ShortcutTarget:      shortcut.LayoutInfo{Layout: "us", Variant: "dvorak"},
+			ShortcutTargetIndex: 0,
 		}, nil
 	}
 
@@ -334,12 +334,55 @@ func TestRunValidateConfigWithShortcutLayout(t *testing.T) {
 	}
 }
 
-func TestRunValidateConfigWrapsShortcutErrors(t *testing.T) {
+func TestRunValidateConfigWithTapLayoutSwitches(t *testing.T) {
 	origLoad := loadRuntimeFn
-	origShortcut := shortcutValidateFn
+	origSwitch := switchValidateFn
 	defer func() {
 		loadRuntimeFn = origLoad
-		shortcutValidateFn = origShortcut
+		switchValidateFn = origSwitch
+	}()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("tap_layout_switches:\n  Caps:\n    toggle_recent: true\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	loadRuntimeFn = func(path string) (config.Runtime, error) {
+		cfg := config.DefaultRuntime()
+		cfg.TapLayoutSwitches[config.KeyCapsLock] = config.LayoutSwitchTapAction{Kind: config.LayoutSwitchTapToggleRecent}
+		return cfg, nil
+	}
+	switchValidateFn = func(ctx context.Context, cfg config.Runtime) (shortcut.ValidationInfo, error) {
+		if len(cfg.TapLayoutSwitches) != 1 {
+			t.Fatalf("unexpected tap layout switches: %#v", cfg.TapLayoutSwitches)
+		}
+		return shortcut.ValidationInfo{
+			Current: shortcut.LayoutInfo{Layout: "ru"},
+			TapSwitches: []shortcut.TapSwitchInfo{
+				{
+					SourceCode: config.KeyCapsLock,
+					Action:     config.LayoutSwitchTapAction{Kind: config.LayoutSwitchTapToggleRecent},
+				},
+			},
+		}, nil
+	}
+
+	var out bytes.Buffer
+	if err := runValidateConfig(configPath, &out); err != nil {
+		t.Fatalf("runValidateConfig: %v", err)
+	}
+	want := "config OK: " + configPath + " (current=ru tap_switches=1)\n"
+	if got := out.String(); got != want {
+		t.Fatalf("unexpected output: got=%q want=%q", got, want)
+	}
+}
+
+func TestRunValidateConfigWrapsSwitchErrors(t *testing.T) {
+	origLoad := loadRuntimeFn
+	origSwitch := switchValidateFn
+	defer func() {
+		loadRuntimeFn = origLoad
+		switchValidateFn = origSwitch
 	}()
 
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -352,7 +395,7 @@ func TestRunValidateConfigWrapsShortcutErrors(t *testing.T) {
 		cfg.ShortcutLayout = &config.ShortcutLayoutSpec{Layout: "us"}
 		return cfg, nil
 	}
-	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
+	switchValidateFn = func(ctx context.Context, cfg config.Runtime) (shortcut.ValidationInfo, error) {
 		return shortcut.ValidationInfo{}, errors.New("qdbus failed")
 	}
 
@@ -360,7 +403,7 @@ func TestRunValidateConfigWrapsShortcutErrors(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error")
 	}
-	if !strings.Contains(err.Error(), "shortcut_layout validation failed: qdbus failed") {
+	if !strings.Contains(err.Error(), "layout switch validation failed: qdbus failed") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

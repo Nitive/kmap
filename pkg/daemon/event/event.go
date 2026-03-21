@@ -1,7 +1,20 @@
 package event
 
-// KeyEvent represents a key press/release event.
+type Kind int
+
+const (
+	KindKey Kind = iota
+	KindLayoutSwitch
+)
+
+type LayoutSwitchRequest struct {
+	SourceCode uint16
+}
+
+// KeyEvent represents a key press/release event or an internal control event.
 type KeyEvent struct {
-	Code  uint16
-	Value int32
+	Kind         Kind
+	Code         uint16
+	Value        int32
+	LayoutSwitch LayoutSwitchRequest
 }

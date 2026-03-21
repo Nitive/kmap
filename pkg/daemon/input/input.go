@@ -184,7 +184,7 @@ func (d *Device) readLoop(eventsCh chan<- event.KeyEvent, errCh chan<- error) {
 		if ev.Type != evKey {
 			continue
 		}
-		eventsCh <- event.KeyEvent{Code: ev.Code, Value: ev.Value}
+		eventsCh <- event.KeyEvent{Kind: event.KindKey, Code: ev.Code, Value: ev.Value}
 	}
 }
 

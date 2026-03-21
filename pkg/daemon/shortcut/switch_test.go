@@ -59,6 +59,24 @@ VariantList=dvorak,
 	}
 }
 
+func makeSwitchConfig() config.Runtime {
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutLayout = &config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"}
+	cfg.TapLayoutSwitches[config.KeyLeftAlt] = config.LayoutSwitchTapAction{
+		Kind:    config.LayoutSwitchTapToLayout,
+		Layout:  "us",
+		Variant: "dvorak",
+	}
+	cfg.TapLayoutSwitches[config.KeyRightAlt] = config.LayoutSwitchTapAction{
+		Kind:   config.LayoutSwitchTapToLayout,
+		Layout: "ru",
+	}
+	cfg.TapLayoutSwitches[config.KeyCapsLock] = config.LayoutSwitchTapAction{
+		Kind: config.LayoutSwitchTapToggleRecent,
+	}
+	return cfg
+}
+
 func TestNewSwitchManagerWithLoader(t *testing.T) {
 	writeKDEConfig(t)
 
@@ -66,20 +84,23 @@ func TestNewSwitchManagerWithLoader(t *testing.T) {
 	manager, info, err := NewSwitchManagerWithLoader(
 		context.Background(),
 		Loader{runner: runner},
-		config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"},
+		makeSwitchConfig(),
 		false,
 	)
 	if err != nil {
 		t.Fatalf("NewSwitchManagerWithLoader: %v", err)
 	}
-	if manager.targetIndex != 0 || manager.target.Layout != "us" || manager.target.Variant != "dvorak" {
-		t.Fatalf("unexpected target: index=%d info=%#v", manager.targetIndex, manager.target)
+	if manager.shortcutIndex != 0 || manager.shortcutTarget.Layout != "us" || manager.shortcutTarget.Variant != "dvorak" {
+		t.Fatalf("unexpected shortcut target: index=%d info=%#v", manager.shortcutIndex, manager.shortcutTarget)
 	}
 	if info.Current.Layout != "ru" || info.Current.Variant != "" {
 		t.Fatalf("unexpected current layout: %#v", info.Current)
 	}
-	if info.Target.Layout != "us" || info.Target.Variant != "dvorak" || info.TargetIndex != 0 {
+	if info.ShortcutTarget.Layout != "us" || info.ShortcutTarget.Variant != "dvorak" || info.ShortcutTargetIndex != 0 {
 		t.Fatalf("unexpected validation info: %#v", info)
+	}
+	if len(info.TapSwitches) != 3 {
+		t.Fatalf("unexpected tap switch count: %#v", info.TapSwitches)
 	}
 }
 
@@ -90,7 +111,7 @@ func TestSwitchManagerSwitchesAndRestoresAroundShortcut(t *testing.T) {
 	manager, _, err := NewSwitchManagerWithLoader(
 		context.Background(),
 		Loader{runner: runner},
-		config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"},
+		makeSwitchConfig(),
 		false,
 	)
 	if err != nil {
@@ -104,12 +125,12 @@ func TestSwitchManagerSwitchesAndRestoresAroundShortcut(t *testing.T) {
 	}
 
 	seq := []event.KeyEvent{
-		{Code: config.KeyLeftCtrl, Value: 1},
-		{Code: config.KeyLeftShift, Value: 1},
-		{Code: config.KeyDot, Value: 1},
-		{Code: config.KeyLeftCtrl, Value: 0},
-		{Code: config.KeyDot, Value: 0},
-		{Code: config.KeyLeftShift, Value: 0},
+		{Kind: event.KindKey, Code: config.KeyLeftCtrl, Value: 1},
+		{Kind: event.KindKey, Code: config.KeyLeftShift, Value: 1},
+		{Kind: event.KindKey, Code: config.KeyDot, Value: 1},
+		{Kind: event.KindKey, Code: config.KeyLeftCtrl, Value: 0},
+		{Kind: event.KindKey, Code: config.KeyDot, Value: 0},
+		{Kind: event.KindKey, Code: config.KeyLeftShift, Value: 0},
 	}
 
 	for _, ev := range seq {
@@ -138,7 +159,7 @@ func TestSwitchManagerDoesNotSwitchForShiftOnly(t *testing.T) {
 	manager, _, err := NewSwitchManagerWithLoader(
 		context.Background(),
 		Loader{runner: runner},
-		config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"},
+		makeSwitchConfig(),
 		false,
 	)
 	if err != nil {
@@ -146,10 +167,10 @@ func TestSwitchManagerDoesNotSwitchForShiftOnly(t *testing.T) {
 	}
 
 	seq := []event.KeyEvent{
-		{Code: config.KeyLeftShift, Value: 1},
-		{Code: config.KeyDot, Value: 1},
-		{Code: config.KeyDot, Value: 0},
-		{Code: config.KeyLeftShift, Value: 0},
+		{Kind: event.KindKey, Code: config.KeyLeftShift, Value: 1},
+		{Kind: event.KindKey, Code: config.KeyDot, Value: 1},
+		{Kind: event.KindKey, Code: config.KeyDot, Value: 0},
+		{Kind: event.KindKey, Code: config.KeyLeftShift, Value: 0},
 	}
 
 	for _, ev := range seq {
@@ -170,20 +191,20 @@ func TestSwitchManagerDoesNotRestoreUntilPressedKeyIsReleased(t *testing.T) {
 	manager, _, err := NewSwitchManagerWithLoader(
 		context.Background(),
 		Loader{runner: runner},
-		config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"},
+		makeSwitchConfig(),
 		false,
 	)
 	if err != nil {
 		t.Fatalf("NewSwitchManagerWithLoader: %v", err)
 	}
 
-	if err := manager.Process(context.Background(), event.KeyEvent{Code: config.KeyLeftCtrl, Value: 1}, func(event.KeyEvent) error { return nil }); err != nil {
+	if err := manager.Process(context.Background(), event.KeyEvent{Kind: event.KindKey, Code: config.KeyLeftCtrl, Value: 1}, func(event.KeyEvent) error { return nil }); err != nil {
 		t.Fatalf("ctrl down: %v", err)
 	}
-	if err := manager.Process(context.Background(), event.KeyEvent{Code: config.KeyDot, Value: 1}, func(event.KeyEvent) error { return nil }); err != nil {
+	if err := manager.Process(context.Background(), event.KeyEvent{Kind: event.KindKey, Code: config.KeyDot, Value: 1}, func(event.KeyEvent) error { return nil }); err != nil {
 		t.Fatalf("dot down: %v", err)
 	}
-	if err := manager.Process(context.Background(), event.KeyEvent{Code: config.KeyLeftCtrl, Value: 0}, func(event.KeyEvent) error { return nil }); err != nil {
+	if err := manager.Process(context.Background(), event.KeyEvent{Kind: event.KindKey, Code: config.KeyLeftCtrl, Value: 0}, func(event.KeyEvent) error { return nil }); err != nil {
 		t.Fatalf("ctrl up: %v", err)
 	}
 
@@ -191,12 +212,110 @@ func TestSwitchManagerDoesNotRestoreUntilPressedKeyIsReleased(t *testing.T) {
 		t.Fatalf("unexpected setLayout calls after ctrl release: %#v", runner.setCalls)
 	}
 
-	if err := manager.Process(context.Background(), event.KeyEvent{Code: config.KeyDot, Value: 0}, func(event.KeyEvent) error { return nil }); err != nil {
+	if err := manager.Process(context.Background(), event.KeyEvent{Kind: event.KindKey, Code: config.KeyDot, Value: 0}, func(event.KeyEvent) error { return nil }); err != nil {
 		t.Fatalf("dot up: %v", err)
 	}
 
 	if len(runner.setCalls) != 2 || runner.setCalls[1] != 1 {
 		t.Fatalf("unexpected setLayout calls after dot release: %#v", runner.setCalls)
+	}
+}
+
+func TestSwitchManagerTapDirectSwitchRecordsRecent(t *testing.T) {
+	writeKDEConfig(t)
+
+	runner := &switchRunner{current: 1}
+	manager, _, err := NewSwitchManagerWithLoader(
+		context.Background(),
+		Loader{runner: runner},
+		makeSwitchConfig(),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("NewSwitchManagerWithLoader: %v", err)
+	}
+
+	err = manager.Process(
+		context.Background(),
+		event.KeyEvent{Kind: event.KindLayoutSwitch, LayoutSwitch: event.LayoutSwitchRequest{SourceCode: config.KeyLeftAlt}},
+		func(event.KeyEvent) error { t.Fatalf("tap layout switch should not emit key events"); return nil },
+	)
+	if err != nil {
+		t.Fatalf("Process(tap direct): %v", err)
+	}
+
+	if len(runner.setCalls) != 1 || runner.setCalls[0] != 0 {
+		t.Fatalf("unexpected setLayout calls: %#v", runner.setCalls)
+	}
+	if runner.current != 0 {
+		t.Fatalf("unexpected current layout index: %d", runner.current)
+	}
+	if manager.recentIndex != 1 {
+		t.Fatalf("unexpected recent index: %d", manager.recentIndex)
+	}
+}
+
+func TestSwitchManagerTapToggleRecentSwapsLayouts(t *testing.T) {
+	writeKDEConfig(t)
+
+	runner := &switchRunner{current: 1}
+	manager, _, err := NewSwitchManagerWithLoader(
+		context.Background(),
+		Loader{runner: runner},
+		makeSwitchConfig(),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("NewSwitchManagerWithLoader: %v", err)
+	}
+
+	if err := manager.Process(context.Background(), event.KeyEvent{
+		Kind:         event.KindLayoutSwitch,
+		LayoutSwitch: event.LayoutSwitchRequest{SourceCode: config.KeyLeftAlt},
+	}, func(event.KeyEvent) error { return nil }); err != nil {
+		t.Fatalf("direct switch: %v", err)
+	}
+	if err := manager.Process(context.Background(), event.KeyEvent{
+		Kind:         event.KindLayoutSwitch,
+		LayoutSwitch: event.LayoutSwitchRequest{SourceCode: config.KeyCapsLock},
+	}, func(event.KeyEvent) error { return nil }); err != nil {
+		t.Fatalf("toggle recent: %v", err)
+	}
+
+	if len(runner.setCalls) != 2 || runner.setCalls[0] != 0 || runner.setCalls[1] != 1 {
+		t.Fatalf("unexpected setLayout calls: %#v", runner.setCalls)
+	}
+	if runner.current != 1 {
+		t.Fatalf("unexpected current layout index: %d", runner.current)
+	}
+	if manager.recentIndex != 0 {
+		t.Fatalf("unexpected recent index after toggle: %d", manager.recentIndex)
+	}
+}
+
+func TestSwitchManagerTapToggleRecentWithoutHistoryIsNoop(t *testing.T) {
+	writeKDEConfig(t)
+
+	runner := &switchRunner{current: 1}
+	manager, _, err := NewSwitchManagerWithLoader(
+		context.Background(),
+		Loader{runner: runner},
+		makeSwitchConfig(),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("NewSwitchManagerWithLoader: %v", err)
+	}
+
+	if err := manager.Process(context.Background(), event.KeyEvent{
+		Kind:         event.KindLayoutSwitch,
+		LayoutSwitch: event.LayoutSwitchRequest{SourceCode: config.KeyCapsLock},
+	}, func(event.KeyEvent) error { return nil }); err != nil {
+		t.Fatalf("toggle recent: %v", err)
+	}
+
+	if len(runner.setCalls) != 0 {
+		t.Fatalf("unexpected setLayout calls: %#v", runner.setCalls)
 	}
 }
 
@@ -207,14 +326,14 @@ func TestSwitchManagerCloseRestoresLayout(t *testing.T) {
 	manager, _, err := NewSwitchManagerWithLoader(
 		context.Background(),
 		Loader{runner: runner},
-		config.ShortcutLayoutSpec{Layout: "us", Variant: "dvorak"},
+		makeSwitchConfig(),
 		false,
 	)
 	if err != nil {
 		t.Fatalf("NewSwitchManagerWithLoader: %v", err)
 	}
 
-	if err := manager.Process(context.Background(), event.KeyEvent{Code: config.KeyLeftCtrl, Value: 1}, func(event.KeyEvent) error { return nil }); err != nil {
+	if err := manager.Process(context.Background(), event.KeyEvent{Kind: event.KindKey, Code: config.KeyLeftCtrl, Value: 1}, func(event.KeyEvent) error { return nil }); err != nil {
 		t.Fatalf("ctrl down: %v", err)
 	}
 

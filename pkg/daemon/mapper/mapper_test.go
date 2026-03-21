@@ -17,10 +17,15 @@ type emittedKey struct {
 	value int32
 }
 
+type emittedLayoutSwitch struct {
+	sourceCode uint16
+}
+
 type fakeEmitter struct {
-	events      []emittedKey
-	failAfter   int
-	currentCall int
+	events         []emittedKey
+	layoutSwitches []emittedLayoutSwitch
+	failAfter      int
+	currentCall    int
 }
 
 func (f *fakeEmitter) emitKey(code uint16, value int32) error {
@@ -29,6 +34,15 @@ func (f *fakeEmitter) emitKey(code uint16, value int32) error {
 		return errors.New("forced emit error")
 	}
 	f.events = append(f.events, emittedKey{code: code, value: value})
+	return nil
+}
+
+func (f *fakeEmitter) emitLayoutSwitch(action event.LayoutSwitchRequest) error {
+	f.currentCall++
+	if f.failAfter > 0 && f.currentCall >= f.failAfter {
+		return errors.New("forced emit error")
+	}
+	f.layoutSwitches = append(f.layoutSwitches, emittedLayoutSwitch{sourceCode: action.SourceCode})
 	return nil
 }
 
@@ -580,4 +594,68 @@ func TestShortcutRemapUsesDynamicMappings(t *testing.T) {
 		evt(config.KeyLeftCtrl, 0),
 	}
 	assertEventsEqual(t, out.events, want)
+}
+
+func TestAltTapEmitsLayoutSwitchRequest(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.TapLayoutSwitches[config.KeyLeftAlt] = config.LayoutSwitchTapAction{
+		Kind:   config.LayoutSwitchTapToLayout,
+		Layout: "us",
+	}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftAlt, 0),
+	})
+
+	assertEventsEqual(t, out.events, nil)
+	if len(out.layoutSwitches) != 1 || out.layoutSwitches[0].sourceCode != config.KeyLeftAlt {
+		t.Fatalf("unexpected layout switch events: %#v", out.layoutSwitches)
+	}
+}
+
+func TestAltTapDoesNotEmitLayoutSwitchAfterLayerUse(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.TapLayoutSwitches[config.KeyLeftAlt] = config.LayoutSwitchTapAction{
+		Kind:   config.LayoutSwitchTapToLayout,
+		Layout: "us",
+	}
+	cfg.AltMappings[config.KeyJ] = config.CompiledMapping{
+		Kind:   config.MappingSymbol,
+		Symbol: '←',
+	}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyJ, 1),
+		evt(config.KeyJ, 0),
+		evt(config.KeyLeftAlt, 0),
+	})
+
+	if len(out.layoutSwitches) != 0 {
+		t.Fatalf("unexpected layout switch events: %#v", out.layoutSwitches)
+	}
+}
+
+func TestCapsTapEmitsLayoutSwitchRequest(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.TapLayoutSwitches[config.KeyCapsLock] = config.LayoutSwitchTapAction{
+		Kind: config.LayoutSwitchTapToggleRecent,
+	}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyCapsLock, 1),
+		evt(config.KeyCapsLock, 0),
+	})
+
+	assertEventsEqual(t, out.events, nil)
+	if len(out.layoutSwitches) != 1 || out.layoutSwitches[0].sourceCode != config.KeyCapsLock {
+		t.Fatalf("unexpected layout switch events: %#v", out.layoutSwitches)
+	}
 }

@@ -38,15 +38,29 @@ type ShortcutLayoutSpec struct {
 	Options string
 }
 
+type LayoutSwitchTapKind int
+
+const (
+	LayoutSwitchTapToLayout LayoutSwitchTapKind = iota
+	LayoutSwitchTapToggleRecent
+)
+
+type LayoutSwitchTapAction struct {
+	Kind    LayoutSwitchTapKind
+	Layout  string
+	Variant string
+}
+
 type Runtime struct {
 	SuppressAlt  bool
 	SuppressCaps bool
 	Devices      []string
 
-	AltMappings      map[uint16]CompiledMapping
-	CapsMappings     map[uint16]CompiledMapping
-	ShortcutLayout   *ShortcutLayoutSpec
-	ShortcutMappings map[uint16]uint16
+	AltMappings       map[uint16]CompiledMapping
+	CapsMappings      map[uint16]CompiledMapping
+	ShortcutLayout    *ShortcutLayoutSpec
+	TapLayoutSwitches map[uint16]LayoutSwitchTapAction
+	ShortcutMappings  map[uint16]uint16
 }
 
 type rawConfig struct {
@@ -55,6 +69,7 @@ type rawConfig struct {
 	devices         []string
 	mappings        map[string]rawAction
 	shortcutLayout  *ShortcutLayoutSpec
+	tapLayoutSwitch map[uint16]LayoutSwitchTapAction
 }
 
 type rawAction struct {
@@ -106,10 +121,11 @@ type yamlAction struct {
 }
 
 type yamlConfig struct {
-	SuppressKeydown *stringOrList         `yaml:"suppress_keydown"`
-	Devices         *stringOrList         `yaml:"devices"`
-	Mappings        map[string]yamlAction `yaml:"mappings"`
-	ShortcutLayout  *yamlShortcutLayout   `yaml:"shortcut_layout"`
+	SuppressKeydown *stringOrList                        `yaml:"suppress_keydown"`
+	Devices         *stringOrList                        `yaml:"devices"`
+	Mappings        map[string]yamlAction                `yaml:"mappings"`
+	ShortcutLayout  *yamlShortcutLayout                  `yaml:"shortcut_layout"`
+	TapLayoutSwitch map[string]yamlTapLayoutSwitchAction `yaml:"tap_layout_switches"`
 }
 
 type yamlShortcutLayout struct {
@@ -118,6 +134,12 @@ type yamlShortcutLayout struct {
 	Rules   string `yaml:"rules"`
 	Model   string `yaml:"model"`
 	Options string `yaml:"options"`
+}
+
+type yamlTapLayoutSwitchAction struct {
+	Layout       string `yaml:"layout"`
+	Variant      string `yaml:"variant"`
+	ToggleRecent bool   `yaml:"toggle_recent"`
 }
 
 var keyCodeByName = map[string]uint16{
@@ -215,11 +237,12 @@ var keyCodeByName = map[string]uint16{
 
 func DefaultRuntime() Runtime {
 	return Runtime{
-		SuppressAlt:      true,
-		SuppressCaps:     true,
-		AltMappings:      make(map[uint16]CompiledMapping),
-		CapsMappings:     make(map[uint16]CompiledMapping),
-		ShortcutMappings: make(map[uint16]uint16),
+		SuppressAlt:       true,
+		SuppressCaps:      true,
+		AltMappings:       make(map[uint16]CompiledMapping),
+		CapsMappings:      make(map[uint16]CompiledMapping),
+		TapLayoutSwitches: make(map[uint16]LayoutSwitchTapAction),
+		ShortcutMappings:  make(map[uint16]uint16),
 	}
 }
 
@@ -281,7 +304,10 @@ func parseRawConfigYAML(raw string) (rawConfig, error) {
 		return rawConfig{}, errors.New("multiple YAML documents are not supported")
 	}
 
-	out := rawConfig{mappings: make(map[string]rawAction)}
+	out := rawConfig{
+		mappings:        make(map[string]rawAction),
+		tapLayoutSwitch: make(map[uint16]LayoutSwitchTapAction),
+	}
 	if decoded.SuppressKeydown != nil {
 		out.suppressDefined = true
 		out.suppressKeys = append(out.suppressKeys, []string(*decoded.SuppressKeydown)...)
@@ -297,6 +323,17 @@ func parseRawConfigYAML(raw string) (rawConfig, error) {
 			Model:   trimASCIIWhitespace(decoded.ShortcutLayout.Model),
 			Options: trimASCIIWhitespace(decoded.ShortcutLayout.Options),
 		}
+	}
+	for keyName, action := range decoded.TapLayoutSwitch {
+		code, err := ParseKeyName(keyName)
+		if err != nil {
+			return rawConfig{}, fmt.Errorf("tap_layout_switches %q: %w", keyName, err)
+		}
+		compiled, err := compileTapLayoutSwitchAction(keyName, action)
+		if err != nil {
+			return rawConfig{}, err
+		}
+		out.tapLayoutSwitch[code] = compiled
 	}
 
 	for binding, action := range decoded.Mappings {
@@ -345,6 +382,21 @@ func applyRawConfig(cfg *Runtime, raw rawConfig) error {
 			Options: raw.shortcutLayout.Options,
 		}
 	}
+	for code, action := range raw.tapLayoutSwitch {
+		switch code {
+		case KeyLeftAlt, KeyRightAlt:
+			if !cfg.SuppressAlt {
+				return fmt.Errorf("tap_layout_switches %q requires suppress_keydown to include Alt", KeyName(code))
+			}
+		case KeyCapsLock:
+			if !cfg.SuppressCaps {
+				return fmt.Errorf("tap_layout_switches %q requires suppress_keydown to include Caps", KeyName(code))
+			}
+		default:
+			return fmt.Errorf("tap_layout_switches %q is unsupported (only LAlt, RAlt, and Caps are supported)", KeyName(code))
+		}
+		cfg.TapLayoutSwitches[code] = action
+	}
 
 	for binding, action := range raw.mappings {
 		layer, keyCode, err := parseBindingKey(binding)
@@ -367,6 +419,35 @@ func applyRawConfig(cfg *Runtime, raw rawConfig) error {
 	}
 
 	return nil
+}
+
+func compileTapLayoutSwitchAction(keyName string, action yamlTapLayoutSwitchAction) (LayoutSwitchTapAction, error) {
+	layout := trimASCIIWhitespace(action.Layout)
+	variant := trimASCIIWhitespace(action.Variant)
+	setCount := 0
+	if layout != "" || variant != "" {
+		setCount++
+	}
+	if action.ToggleRecent {
+		setCount++
+	}
+	if setCount == 0 {
+		return LayoutSwitchTapAction{}, fmt.Errorf("tap_layout_switches %q: no action specified", keyName)
+	}
+	if setCount > 1 {
+		return LayoutSwitchTapAction{}, fmt.Errorf("tap_layout_switches %q: only one action is allowed", keyName)
+	}
+	if action.ToggleRecent {
+		return LayoutSwitchTapAction{Kind: LayoutSwitchTapToggleRecent}, nil
+	}
+	if layout == "" {
+		return LayoutSwitchTapAction{}, fmt.Errorf("tap_layout_switches %q: layout must not be empty", keyName)
+	}
+	return LayoutSwitchTapAction{
+		Kind:    LayoutSwitchTapToLayout,
+		Layout:  layout,
+		Variant: variant,
+	}, nil
 }
 
 func compileAction(action rawAction) (CompiledMapping, error) {

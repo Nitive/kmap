@@ -357,16 +357,16 @@ func TestLoadShortcutSwitcher(t *testing.T) {
 
 		orc := &orchestrator{
 			cfg: cfg,
-			shortcutMake: func(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
+			shortcutMake: func(ctx context.Context, gotCfg config.Runtime, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
 				_ = ctx
 				_ = verbose
-				if target.Layout != "us" || target.Variant != "dvorak" {
-					t.Fatalf("unexpected target layout: %#v", target)
+				if gotCfg.ShortcutLayout == nil || gotCfg.ShortcutLayout.Layout != "us" || gotCfg.ShortcutLayout.Variant != "dvorak" {
+					t.Fatalf("unexpected config: %#v", gotCfg.ShortcutLayout)
 				}
 				return switcher, shortcut.ValidationInfo{
-					Current:     shortcut.LayoutInfo{Layout: "ru", Description: "ru"},
-					Target:      shortcut.LayoutInfo{Layout: "us", Variant: "dvorak", Description: "us(dvorak)"},
-					TargetIndex: 0,
+					Current:             shortcut.LayoutInfo{Layout: "ru", Description: "ru"},
+					ShortcutTarget:      shortcut.LayoutInfo{Layout: "us", Variant: "dvorak", Description: "us(dvorak)"},
+					ShortcutTargetIndex: 0,
 				}, nil
 			},
 		}
@@ -385,9 +385,12 @@ func TestLoadShortcutSwitcher(t *testing.T) {
 
 		orc := &orchestrator{
 			cfg: cfg,
-			shortcutMake: func(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
+			shortcutMake: func(ctx context.Context, gotCfg config.Runtime, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
 				_ = ctx
 				_ = verbose
+				if gotCfg.ShortcutLayout == nil || gotCfg.ShortcutLayout.Layout != "us" {
+					t.Fatalf("unexpected config: %#v", gotCfg.ShortcutLayout)
+				}
 				return nil, shortcut.ValidationInfo{}, errors.New("dbus failed")
 			},
 		}
@@ -396,7 +399,7 @@ func TestLoadShortcutSwitcher(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected loader error")
 		}
-		if err.Error() != "load shortcut layout switch: dbus failed" {
+		if err.Error() != "load layout switcher: dbus failed" {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

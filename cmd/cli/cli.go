@@ -17,13 +17,13 @@ import (
 )
 
 var (
-	runStartFn         = runStart
-	runSetupKeymapFn   = runSetupKeymap
-	generateFn         = xcompose.GenerateFile
-	daemonStartFn      = daemon.Start
-	loadRuntimeFn      = config.LoadRuntime
-	shortcutValidateFn = func(ctx context.Context, target config.ShortcutLayoutSpec) (shortcut.ValidationInfo, error) {
-		return shortcut.ValidateShortcutLayout(ctx, target)
+	runStartFn       = runStart
+	runSetupKeymapFn = runSetupKeymap
+	generateFn       = xcompose.GenerateFile
+	daemonStartFn    = daemon.Start
+	loadRuntimeFn    = config.LoadRuntime
+	switchValidateFn = func(ctx context.Context, cfg config.Runtime) (shortcut.ValidationInfo, error) {
+		return shortcut.ValidateSwitchConfig(ctx, cfg)
 	}
 )
 
@@ -51,7 +51,7 @@ var commands = map[string]cliCommand{
 	},
 	"validate-config": {
 		Name:        "validate-config",
-		Description: "Validate config parsing and shortcut layout loading",
+		Description: "Validate config parsing and KDE layout switching setup",
 		Run:         runValidateConfigCommand,
 	},
 }
@@ -164,24 +164,32 @@ func runValidateConfig(configPath string, out io.Writer) error {
 		return err
 	}
 
-	if cfg.ShortcutLayout == nil {
+	if cfg.ShortcutLayout == nil && len(cfg.TapLayoutSwitches) == 0 {
 		_, _ = fmt.Fprintf(out, "config OK: %s\n", configPath)
 		return nil
 	}
 
-	info, err := shortcutValidateFn(context.Background(), *cfg.ShortcutLayout)
+	info, err := switchValidateFn(context.Background(), cfg)
 	if err != nil {
-		return fmt.Errorf("shortcut_layout validation failed: %w", err)
+		return fmt.Errorf("layout switch validation failed: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(
-		out,
-		"config OK: %s (shortcut current=%s target=%s target_index=%d)\n",
-		configPath,
-		formatLayout(info.Current.Layout, info.Current.Variant),
-		formatLayout(info.Target.Layout, info.Target.Variant),
-		info.TargetIndex,
-	)
+	details := ""
+	if cfg.ShortcutLayout != nil {
+		details = fmt.Sprintf(
+			"shortcut current=%s target=%s target_index=%d",
+			formatLayout(info.Current.Layout, info.Current.Variant),
+			formatLayout(info.ShortcutTarget.Layout, info.ShortcutTarget.Variant),
+			info.ShortcutTargetIndex,
+		)
+	} else {
+		details = fmt.Sprintf("current=%s", formatLayout(info.Current.Layout, info.Current.Variant))
+	}
+	if len(info.TapSwitches) > 0 {
+		details += fmt.Sprintf(" tap_switches=%d", len(info.TapSwitches))
+	}
+
+	_, _ = fmt.Fprintf(out, "config OK: %s (%s)\n", configPath, details)
 	return nil
 }
 

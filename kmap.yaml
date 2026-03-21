@@ -14,10 +14,10 @@ suppress_keydown:
 
 # Single-tap layout switches.
 tap_layout_switches:
-  RAlt:
+  LAlt:
     layout: us
     variant: dvorak
-  LAlt:
+  RAlt:
     layout: ru
 
 # Full mapping set.

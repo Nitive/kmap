@@ -200,6 +200,10 @@ func Run(kb *Keyboard, in <-chan event.KeyEvent) <-chan error {
 	go func() {
 		defer close(errCh)
 		for ev := range in {
+			if ev.Kind != event.KindKey {
+				errCh <- fmt.Errorf("output received unsupported event kind %d", ev.Kind)
+				return
+			}
 			if err := kb.EmitKey(ev.Code, ev.Value); err != nil {
 				errCh <- err
 				return

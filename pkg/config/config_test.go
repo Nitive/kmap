@@ -17,6 +17,12 @@ devices:
 suppress_keydown:
   - Caps
   - Alt
+tap_layout_switches:
+  LAlt:
+    layout: us
+    variant: dvorak
+  Caps:
+    toggle_recent: true
 
 mappings:
   Alt-Tab:
@@ -39,6 +45,15 @@ mappings:
 	if len(raw.devices) != 2 {
 		t.Fatalf("unexpected devices size: %d", len(raw.devices))
 	}
+	if len(raw.tapLayoutSwitch) != 2 {
+		t.Fatalf("unexpected tap_layout_switches size: %d", len(raw.tapLayoutSwitch))
+	}
+	if raw.tapLayoutSwitch[KeyLeftAlt].Kind != LayoutSwitchTapToLayout {
+		t.Fatalf("unexpected LAlt tap switch: %#v", raw.tapLayoutSwitch[KeyLeftAlt])
+	}
+	if raw.tapLayoutSwitch[KeyCapsLock].Kind != LayoutSwitchTapToggleRecent {
+		t.Fatalf("unexpected Caps tap switch: %#v", raw.tapLayoutSwitch[KeyCapsLock])
+	}
 
 	tab := raw.mappings["Alt-Tab"]
 	if tab.passthrough == nil || !*tab.passthrough {
@@ -60,6 +75,14 @@ suppress_keydown: [Caps, Alt]
 shortcut_layout:
   layout: us
   variant: dvorak
+tap_layout_switches:
+  LAlt:
+    layout: us
+    variant: dvorak
+  RAlt:
+    layout: ru
+  Caps:
+    toggle_recent: true
 mappings:
   Alt-Tab:
     passthrough: true
@@ -88,6 +111,15 @@ mappings:
 	}
 	if cfg.ShortcutLayout.Layout != "us" || cfg.ShortcutLayout.Variant != "dvorak" {
 		t.Fatalf("shortcut layout mismatch: %#v", cfg.ShortcutLayout)
+	}
+	if cfg.TapLayoutSwitches[KeyLeftAlt].Layout != "us" || cfg.TapLayoutSwitches[KeyLeftAlt].Variant != "dvorak" {
+		t.Fatalf("unexpected left alt tap switch: %#v", cfg.TapLayoutSwitches[KeyLeftAlt])
+	}
+	if cfg.TapLayoutSwitches[KeyRightAlt].Layout != "ru" {
+		t.Fatalf("unexpected right alt tap switch: %#v", cfg.TapLayoutSwitches[KeyRightAlt])
+	}
+	if cfg.TapLayoutSwitches[KeyCapsLock].Kind != LayoutSwitchTapToggleRecent {
+		t.Fatalf("unexpected caps tap switch: %#v", cfg.TapLayoutSwitches[KeyCapsLock])
 	}
 
 	altTab := cfg.AltMappings[KeyTab]
@@ -156,6 +188,56 @@ func TestApplyRawConfigRejectsBlankShortcutLayout(t *testing.T) {
 		t.Fatalf("expected shortcut layout validation error")
 	}
 	if !strings.Contains(err.Error(), "shortcut_layout.layout") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyRawConfigRejectsUnsupportedTapLayoutSwitchKey(t *testing.T) {
+	raw, err := parseRawConfigYAML("tap_layout_switches:\n  Q:\n    layout: us\n")
+	if err != nil {
+		t.Fatalf("parseRawConfigYAML: %v", err)
+	}
+
+	cfg := DefaultRuntime()
+	err = applyRawConfig(&cfg, raw)
+	if err == nil {
+		t.Fatalf("expected unsupported tap switch key error")
+	}
+	if !strings.Contains(err.Error(), "tap_layout_switches") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyRawConfigRejectsTapLayoutSwitchWithoutSuppression(t *testing.T) {
+	raw, err := parseRawConfigYAML(`
+suppress_keydown: [Caps]
+tap_layout_switches:
+  LAlt:
+    layout: us
+`)
+	if err != nil {
+		t.Fatalf("parseRawConfigYAML: %v", err)
+	}
+
+	cfg := DefaultRuntime()
+	err = applyRawConfig(&cfg, raw)
+	if err == nil {
+		t.Fatalf("expected suppression validation error")
+	}
+	if !strings.Contains(err.Error(), "requires suppress_keydown") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCompileTapLayoutSwitchActionRejectsMixedActions(t *testing.T) {
+	_, err := compileTapLayoutSwitchAction("Caps", yamlTapLayoutSwitchAction{
+		Layout:       "us",
+		ToggleRecent: true,
+	})
+	if err == nil {
+		t.Fatalf("expected mixed action error")
+	}
+	if !strings.Contains(err.Error(), "only one action") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

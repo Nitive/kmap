@@ -18,6 +18,7 @@ type Options struct {
 
 type keyEmitter interface {
 	emitKey(code uint16, value int32) error
+	emitLayoutSwitch(action event.LayoutSwitchRequest) error
 	tapKey(code uint16, delay time.Duration) error
 }
 
@@ -26,7 +27,15 @@ type channelEmitter struct {
 }
 
 func (e *channelEmitter) emitKey(code uint16, value int32) error {
-	e.out <- event.KeyEvent{Code: code, Value: value}
+	e.out <- event.KeyEvent{Kind: event.KindKey, Code: code, Value: value}
+	return nil
+}
+
+func (e *channelEmitter) emitLayoutSwitch(action event.LayoutSwitchRequest) error {
+	e.out <- event.KeyEvent{
+		Kind:         event.KindLayoutSwitch,
+		LayoutSwitch: action,
+	}
 	return nil
 }
 
@@ -47,20 +56,23 @@ func (e *channelEmitter) tapKey(code uint16, delay time.Duration) error {
 }
 
 type remapper struct {
-	out          keyEmitter
-	composeDelay time.Duration
-	verbose      bool
-	suppressAlt  bool
-	suppressCaps bool
-	altMappings  map[uint16]config.CompiledMapping
-	capsMappings map[uint16]config.CompiledMapping
-	shortcutMaps map[uint16]uint16
-	shortcutFn   func() map[uint16]uint16
+	out               keyEmitter
+	composeDelay      time.Duration
+	verbose           bool
+	suppressAlt       bool
+	suppressCaps      bool
+	altMappings       map[uint16]config.CompiledMapping
+	capsMappings      map[uint16]config.CompiledMapping
+	tapLayoutSwitches map[uint16]config.LayoutSwitchTapAction
+	shortcutMaps      map[uint16]uint16
+	shortcutFn        func() map[uint16]uint16
 
 	altActive  bool
 	altCode    uint16
 	altEmitted bool
+	altUsed    bool
 	capsActive bool
+	capsUsed   bool
 
 	activeRemapped map[uint16]uint16
 	swallowed      map[uint16]bool
@@ -113,24 +125,29 @@ func newRemapperWithConfig(out keyEmitter, composeDelay time.Duration, verbose b
 	for code, mapping := range cfg.CapsMappings {
 		capsMappings[code] = config.CloneCompiledMapping(mapping)
 	}
+	tapLayoutSwitches := make(map[uint16]config.LayoutSwitchTapAction, len(cfg.TapLayoutSwitches))
+	for code, action := range cfg.TapLayoutSwitches {
+		tapLayoutSwitches[code] = action
+	}
 	shortcutMaps := make(map[uint16]uint16, len(cfg.ShortcutMappings))
 	for srcCode, dstCode := range cfg.ShortcutMappings {
 		shortcutMaps[srcCode] = dstCode
 	}
 
 	return &remapper{
-		out:            out,
-		composeDelay:   composeDelay,
-		verbose:        verbose,
-		suppressAlt:    cfg.SuppressAlt,
-		suppressCaps:   cfg.SuppressCaps,
-		altMappings:    altMappings,
-		capsMappings:   capsMappings,
-		shortcutMaps:   shortcutMaps,
-		shortcutFn:     shortcutFn,
-		activeRemapped: make(map[uint16]uint16),
-		swallowed:      make(map[uint16]bool),
-		modDown:        make(map[uint16]bool),
+		out:               out,
+		composeDelay:      composeDelay,
+		verbose:           verbose,
+		suppressAlt:       cfg.SuppressAlt,
+		suppressCaps:      cfg.SuppressCaps,
+		altMappings:       altMappings,
+		capsMappings:      capsMappings,
+		tapLayoutSwitches: tapLayoutSwitches,
+		shortcutMaps:      shortcutMaps,
+		shortcutFn:        shortcutFn,
+		activeRemapped:    make(map[uint16]uint16),
+		swallowed:         make(map[uint16]bool),
+		modDown:           make(map[uint16]bool),
 	}
 }
 
@@ -260,6 +277,14 @@ func (r *remapper) emitCompose(keys []uint16) error {
 	return nil
 }
 
+func (r *remapper) emitTapLayoutSwitch(code uint16) error {
+	if _, ok := r.tapLayoutSwitches[code]; !ok {
+		return nil
+	}
+	r.logf("tap layout switch requested for key %d", code)
+	return r.out.emitLayoutSwitch(event.LayoutSwitchRequest{SourceCode: code})
+}
+
 func (r *remapper) emitSymbol(symbol rune) error {
 	if symbol == 0 {
 		return nil
@@ -283,10 +308,12 @@ func (r *remapper) handleAltKey(code uint16, value int32) error {
 			r.altActive = true
 			r.altCode = code
 			r.altEmitted = false
+			r.altUsed = false
 			r.logf("alt down pending (%d)", code)
 			return nil
 		}
 
+		r.altUsed = true
 		if err := r.emitAltDownIfNeeded(); err != nil {
 			return err
 		}
@@ -298,9 +325,14 @@ func (r *remapper) handleAltKey(code uint16, value int32) error {
 				if err := r.out.emitKey(code, 0); err != nil {
 					return err
 				}
+			} else if !r.altUsed {
+				if err := r.emitTapLayoutSwitch(code); err != nil {
+					return err
+				}
 			}
 			r.altActive = false
 			r.altEmitted = false
+			r.altUsed = false
 			r.logf("alt released (%d)", code)
 			return nil
 		}
@@ -369,6 +401,7 @@ func (r *remapper) handleMappedAction(code uint16, value int32, mapping config.C
 }
 
 func (r *remapper) handlePendingAltKey(code uint16, value int32) error {
+	r.altUsed = true
 	if mapping, ok := r.altMappings[code]; ok && !r.anyNonAltModifierDown() {
 		r.logf("alt key %d mapped via config kind=%d", code, mapping.Kind)
 		return r.handleMappedAction(code, value, mapping, true)
@@ -411,15 +444,23 @@ func (r *remapper) handleCapsKey(value int32) error {
 	switch value {
 	case 1:
 		r.capsActive = true
+		r.capsUsed = false
 		r.logf("caps layer active")
 	case 0:
+		if r.capsActive && !r.capsUsed {
+			if err := r.emitTapLayoutSwitch(config.KeyCapsLock); err != nil {
+				return err
+			}
+		}
 		r.capsActive = false
+		r.capsUsed = false
 		r.logf("caps layer inactive")
 	}
 	return nil
 }
 
 func (r *remapper) handleCapsLayerKey(code uint16, value int32) error {
+	r.capsUsed = true
 	mapping, ok := r.capsMappings[code]
 	if !ok {
 		return r.emitShortcutAwareKey(code, value)

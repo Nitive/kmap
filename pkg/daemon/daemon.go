@@ -66,7 +66,7 @@ type shortcutSwitcher interface {
 	Close(ctx context.Context) error
 }
 
-type shortcutSwitchFactory func(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error)
+type shortcutSwitchFactory func(ctx context.Context, cfg config.Runtime, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error)
 
 type orchestrator struct {
 	cfg           config.Runtime
@@ -111,8 +111,8 @@ func Start(opts StartOptions) error {
 			}
 			return kb, output.Run(kb, in), nil
 		},
-		shortcutMake: func(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
-			return shortcut.NewSwitchManager(ctx, target, verbose)
+		shortcutMake: func(ctx context.Context, cfg config.Runtime, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
+			return shortcut.NewSwitchManager(ctx, cfg, verbose)
 		},
 		signalSource: sigCh,
 	}
@@ -256,29 +256,35 @@ func (o *orchestrator) setGrabState(enable bool) error {
 }
 
 func (o *orchestrator) loadShortcutSwitcher() error {
-	if o.cfg.ShortcutLayout == nil {
+	if o.cfg.ShortcutLayout == nil && len(o.cfg.TapLayoutSwitches) == 0 {
 		return nil
 	}
 
 	makeProvider := o.shortcutMake
 	if makeProvider == nil {
-		makeProvider = func(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
-			return shortcut.NewSwitchManager(ctx, target, verbose)
+		makeProvider = func(ctx context.Context, cfg config.Runtime, verbose bool) (shortcutSwitcher, shortcut.ValidationInfo, error) {
+			return shortcut.NewSwitchManager(ctx, cfg, verbose)
 		}
 	}
 
-	switcher, info, err := makeProvider(context.Background(), *o.cfg.ShortcutLayout, o.opts.Verbose)
+	switcher, info, err := makeProvider(context.Background(), o.cfg, o.opts.Verbose)
 	if err != nil {
-		return fmt.Errorf("load shortcut layout switch: %w", err)
+		return fmt.Errorf("load layout switcher: %w", err)
 	}
 
 	o.shortcutWrap = switcher
-	log.Printf(
-		"shortcut layout switch enabled: current=%s target=%s target_index=%d",
-		formatLayoutForLog(info.Current.Layout, info.Current.Variant),
-		formatLayoutForLog(info.Target.Layout, info.Target.Variant),
-		info.TargetIndex,
-	)
+	message := fmt.Sprintf("layout switching enabled: current=%s", formatLayoutForLog(info.Current.Layout, info.Current.Variant))
+	if o.cfg.ShortcutLayout != nil {
+		message += fmt.Sprintf(
+			" shortcut_target=%s shortcut_target_index=%d",
+			formatLayoutForLog(info.ShortcutTarget.Layout, info.ShortcutTarget.Variant),
+			info.ShortcutTargetIndex,
+		)
+	}
+	if len(info.TapSwitches) > 0 {
+		message += fmt.Sprintf(" tap_switches=%d", len(info.TapSwitches))
+	}
+	log.Print(message)
 	return nil
 }
 

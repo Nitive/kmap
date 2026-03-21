@@ -47,6 +47,7 @@ Config supports:
 - `suppress_keydown`: layer keys whose down event is delayed (e.g. `Alt`, `Caps`)
 - `devices`: one or more `/dev/input/...` device paths
 - `shortcut_layout`: canonical layout used for modifier-based shortcuts
+- `tap_layout_switches`: tap-only layout switch actions for `LAlt`, `RAlt`, and `Caps`
 - `mappings` with per-layer bindings, for example:
   - `to_symbol: ←`
   - `to_keys: [Left]`
@@ -55,7 +56,7 @@ Config supports:
 
 A full example is in [`kmap.yaml`](./kmap.yaml).
 
-### Automatic Shortcut Layout Switching
+### Automatic Layout Switching
 
 If `shortcut_layout` is configured, `kmap` validates that the target layout exists in KDE, then temporarily switches KDE to that layout while shortcut modifiers are held. This makes app shortcuts such as `Ctrl+Shift+V` behave consistently even when the typing layout is different (for example, Russian).
 
@@ -65,9 +66,24 @@ Example:
 shortcut_layout:
   layout: us
   variant: dvorak
+
+tap_layout_switches:
+  LAlt:
+    layout: us
+    variant: dvorak
+  RAlt:
+    layout: ru
+  Caps:
+    toggle_recent: true
 ```
 
 With that enabled, `kmap` keeps normal typing on the active KDE layout, but switches to Dvorak for shortcuts and restores the previous layout when the shortcut finishes.
+
+`tap_layout_switches` are persistent layout changes:
+
+- tapping `LAlt` or `RAlt` can switch directly to a configured KDE layout
+- tapping `Caps` can toggle back to the most recently used persistent layout
+- only a clean tap triggers the switch; using the key as an Alt/Caps layer key does not
 
 Current constraints:
 

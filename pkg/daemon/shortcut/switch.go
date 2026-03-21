@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,17 +21,32 @@ const (
 	confirmPollInterval   = 2 * time.Millisecond
 )
 
-type ValidationInfo struct {
-	Current     LayoutInfo
+type TapSwitchInfo struct {
+	SourceCode  uint16
+	Action      config.LayoutSwitchTapAction
 	Target      LayoutInfo
 	TargetIndex int
+}
+
+type ValidationInfo struct {
+	Current             LayoutInfo
+	ShortcutTarget      LayoutInfo
+	ShortcutTargetIndex int
+	TapSwitches         []TapSwitchInfo
+}
+
+type resolvedTapSwitch struct {
+	action      config.LayoutSwitchTapAction
+	target      LayoutInfo
+	targetIndex int
 }
 
 type SwitchManager struct {
 	loader         Loader
 	layouts        []LayoutInfo
-	target         LayoutInfo
-	targetIndex    int
+	shortcutTarget LayoutInfo
+	shortcutIndex  int
+	tapSwitches    map[uint16]resolvedTapSwitch
 	confirmTimeout time.Duration
 	verbose        bool
 
@@ -39,13 +55,14 @@ type SwitchManager struct {
 	pressedNonMods map[uint16]int
 	switched       bool
 	restoreIndex   int
+	recentIndex    int
 }
 
-func NewSwitchManager(ctx context.Context, target config.ShortcutLayoutSpec, verbose bool) (*SwitchManager, ValidationInfo, error) {
-	return NewSwitchManagerWithLoader(ctx, NewLoader(), target, verbose)
+func NewSwitchManager(ctx context.Context, cfg config.Runtime, verbose bool) (*SwitchManager, ValidationInfo, error) {
+	return NewSwitchManagerWithLoader(ctx, NewLoader(), cfg, verbose)
 }
 
-func NewSwitchManagerWithLoader(ctx context.Context, loader Loader, target config.ShortcutLayoutSpec, verbose bool) (*SwitchManager, ValidationInfo, error) {
+func NewSwitchManagerWithLoader(ctx context.Context, loader Loader, cfg config.Runtime, verbose bool) (*SwitchManager, ValidationInfo, error) {
 	layouts, err := readConfiguredKDELayouts()
 	if err != nil {
 		return nil, ValidationInfo{}, err
@@ -56,40 +73,67 @@ func NewSwitchManagerWithLoader(ctx context.Context, loader Loader, target confi
 		return nil, ValidationInfo{}, err
 	}
 
-	targetIndex, targetInfo, err := findTargetLayout(layouts, target)
-	if err != nil {
-		return nil, ValidationInfo{}, err
+	info := ValidationInfo{
+		Current:             current,
+		ShortcutTargetIndex: -1,
 	}
-
-	if err := validateXKBLayout(ctx, target); err != nil {
-		return nil, ValidationInfo{}, err
-	}
-
 	manager := &SwitchManager{
 		loader:         loader,
 		layouts:        layouts,
-		target:         targetInfo,
-		targetIndex:    targetIndex,
+		shortcutIndex:  -1,
+		tapSwitches:    make(map[uint16]resolvedTapSwitch, len(cfg.TapLayoutSwitches)),
 		confirmTimeout: defaultConfirmTimeout,
 		verbose:        verbose,
 		modDown:        make(map[uint16]int),
 		pressedNonMods: make(map[uint16]int),
 		restoreIndex:   -1,
+		recentIndex:    -1,
 	}
 
-	return manager, ValidationInfo{
-		Current:     current,
-		Target:      targetInfo,
-		TargetIndex: targetIndex,
-	}, nil
+	if cfg.ShortcutLayout != nil {
+		targetIndex, targetInfo, err := findTargetLayout(layouts, *cfg.ShortcutLayout)
+		if err != nil {
+			return nil, ValidationInfo{}, err
+		}
+		if err := validateXKBLayout(ctx, *cfg.ShortcutLayout); err != nil {
+			return nil, ValidationInfo{}, err
+		}
+		manager.shortcutTarget = targetInfo
+		manager.shortcutIndex = targetIndex
+		info.ShortcutTarget = targetInfo
+		info.ShortcutTargetIndex = targetIndex
+	}
+
+	for _, sourceCode := range sortedTapSwitchSourceCodes(cfg.TapLayoutSwitches) {
+		resolved, tapInfo, err := resolveTapSwitch(ctx, layouts, sourceCode, cfg.TapLayoutSwitches[sourceCode])
+		if err != nil {
+			return nil, ValidationInfo{}, err
+		}
+		manager.tapSwitches[sourceCode] = resolved
+		info.TapSwitches = append(info.TapSwitches, tapInfo)
+	}
+
+	return manager, info, nil
 }
 
-func ValidateShortcutLayout(ctx context.Context, target config.ShortcutLayoutSpec) (ValidationInfo, error) {
-	_, info, err := NewSwitchManager(ctx, target, false)
+func ValidateSwitchConfig(ctx context.Context, cfg config.Runtime) (ValidationInfo, error) {
+	_, info, err := NewSwitchManager(ctx, cfg, false)
 	if err != nil {
 		return ValidationInfo{}, err
 	}
 	return info, nil
+}
+
+func ValidateShortcutLayout(ctx context.Context, target config.ShortcutLayoutSpec) (ValidationInfo, error) {
+	cfg := config.DefaultRuntime()
+	cfg.ShortcutLayout = &config.ShortcutLayoutSpec{
+		Layout:  target.Layout,
+		Variant: target.Variant,
+		Rules:   target.Rules,
+		Model:   target.Model,
+		Options: target.Options,
+	}
+	return ValidateSwitchConfig(ctx, cfg)
 }
 
 func (m *SwitchManager) Wrap(in <-chan event.KeyEvent) (<-chan event.KeyEvent, <-chan error) {
@@ -118,28 +162,36 @@ func (m *SwitchManager) Process(ctx context.Context, ev event.KeyEvent, emit fun
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if err := emit(ev); err != nil {
-		return err
-	}
+	switch ev.Kind {
+	case event.KindKey:
+		if err := emit(ev); err != nil {
+			return err
+		}
 
-	if isShortcutModifier(ev.Code) {
-		updateKeyCount(m.modDown, ev.Code, ev.Value)
-		if isShortcutActivator(ev.Code) && ev.Value == 1 && m.activatorCountLocked() == 1 {
-			if err := m.activateLocked(ctx); err != nil {
+		if isShortcutModifier(ev.Code) {
+			updateKeyCount(m.modDown, ev.Code, ev.Value)
+			if m.shortcutIndex >= 0 && isShortcutActivator(ev.Code) && ev.Value == 1 && m.activatorCountLocked() == 1 {
+				if err := m.activateLocked(ctx); err != nil {
+					return err
+				}
+			}
+		} else if m.switched {
+			updateKeyCount(m.pressedNonMods, ev.Code, ev.Value)
+		}
+
+		if m.switched && m.activatorCountLocked() == 0 && len(m.pressedNonMods) == 0 {
+			if err := m.restoreLocked(ctx); err != nil {
 				return err
 			}
 		}
-	} else if m.switched {
-		updateKeyCount(m.pressedNonMods, ev.Code, ev.Value)
-	}
+		return nil
 
-	if m.switched && m.activatorCountLocked() == 0 && len(m.pressedNonMods) == 0 {
-		if err := m.restoreLocked(ctx); err != nil {
-			return err
-		}
-	}
+	case event.KindLayoutSwitch:
+		return m.handleTapLayoutSwitchLocked(ctx, ev.LayoutSwitch)
 
-	return nil
+	default:
+		return fmt.Errorf("unsupported event kind %d", ev.Kind)
+	}
 }
 
 func (m *SwitchManager) Close(ctx context.Context) error {
@@ -165,8 +217,30 @@ func (m *SwitchManager) activatorCountLocked() int {
 	return count
 }
 
+func (m *SwitchManager) handleTapLayoutSwitchLocked(ctx context.Context, req event.LayoutSwitchRequest) error {
+	resolved, ok := m.tapSwitches[req.SourceCode]
+	if !ok {
+		return fmt.Errorf("unexpected tap layout switch source %s", config.KeyName(req.SourceCode))
+	}
+	if m.switched || m.activatorCountLocked() > 0 {
+		m.logf("ignoring tap layout switch while shortcut layout is active")
+		return nil
+	}
+
+	switch resolved.action.Kind {
+	case config.LayoutSwitchTapToLayout:
+		return m.switchPersistentLocked(ctx, resolved.targetIndex, "tap")
+
+	case config.LayoutSwitchTapToggleRecent:
+		return m.toggleRecentLocked(ctx)
+
+	default:
+		return fmt.Errorf("unsupported tap layout switch kind %d", resolved.action.Kind)
+	}
+}
+
 func (m *SwitchManager) activateLocked(ctx context.Context) error {
-	if m.switched {
+	if m.switched || m.shortcutIndex < 0 {
 		return nil
 	}
 
@@ -177,21 +251,21 @@ func (m *SwitchManager) activateLocked(ctx context.Context) error {
 	if currentIndex < 0 || currentIndex >= len(m.layouts) {
 		return fmt.Errorf("active KDE layout index %d out of range for %d configured layouts", currentIndex, len(m.layouts))
 	}
-	if currentIndex == m.targetIndex {
-		m.logf("shortcut layout already active: %s", m.target.Description)
+	if currentIndex == m.shortcutIndex {
+		m.logf("shortcut layout already active: %s", m.shortcutTarget.Description)
 		return nil
 	}
 
-	if err := m.loader.setKDELayoutIndex(ctx, m.targetIndex); err != nil {
+	if err := m.loader.setKDELayoutIndex(ctx, m.shortcutIndex); err != nil {
 		return err
 	}
-	if err := m.confirmLayoutIndex(ctx, m.targetIndex); err != nil {
+	if err := m.confirmLayoutIndex(ctx, m.shortcutIndex); err != nil {
 		return err
 	}
 
 	m.restoreIndex = currentIndex
 	m.switched = true
-	m.logf("shortcut layout switched: %s -> %s", m.layouts[currentIndex].Description, m.target.Description)
+	m.logf("shortcut layout switched: %s -> %s", m.layouts[currentIndex].Description, m.shortcutTarget.Description)
 	return nil
 }
 
@@ -213,6 +287,68 @@ func (m *SwitchManager) restoreLocked(ctx context.Context) error {
 	m.logf("shortcut layout restored: %s", m.layouts[restoreIndex].Description)
 	m.switched = false
 	m.restoreIndex = -1
+	return nil
+}
+
+func (m *SwitchManager) switchPersistentLocked(ctx context.Context, targetIndex int, reason string) error {
+	currentIndex, err := m.loader.currentKDELayoutIndex(ctx)
+	if err != nil {
+		return err
+	}
+	if currentIndex < 0 || currentIndex >= len(m.layouts) {
+		return fmt.Errorf("active KDE layout index %d out of range for %d configured layouts", currentIndex, len(m.layouts))
+	}
+	if targetIndex < 0 || targetIndex >= len(m.layouts) {
+		return fmt.Errorf("target KDE layout index %d out of range for %d configured layouts", targetIndex, len(m.layouts))
+	}
+	if currentIndex == targetIndex {
+		m.logf("%s layout already active: %s", reason, m.layouts[targetIndex].Description)
+		return nil
+	}
+
+	if err := m.loader.setKDELayoutIndex(ctx, targetIndex); err != nil {
+		return err
+	}
+	if err := m.confirmLayoutIndex(ctx, targetIndex); err != nil {
+		return err
+	}
+
+	m.recentIndex = currentIndex
+	m.logf("%s layout switched: %s -> %s", reason, m.layouts[currentIndex].Description, m.layouts[targetIndex].Description)
+	return nil
+}
+
+func (m *SwitchManager) toggleRecentLocked(ctx context.Context) error {
+	if m.recentIndex < 0 {
+		m.logf("tap recent layout ignored: no recent layout recorded")
+		return nil
+	}
+	if m.recentIndex >= len(m.layouts) {
+		return fmt.Errorf("recent KDE layout index %d out of range for %d configured layouts", m.recentIndex, len(m.layouts))
+	}
+
+	currentIndex, err := m.loader.currentKDELayoutIndex(ctx)
+	if err != nil {
+		return err
+	}
+	if currentIndex < 0 || currentIndex >= len(m.layouts) {
+		return fmt.Errorf("active KDE layout index %d out of range for %d configured layouts", currentIndex, len(m.layouts))
+	}
+	if currentIndex == m.recentIndex {
+		m.logf("tap recent layout ignored: current layout already matches recent layout")
+		return nil
+	}
+
+	targetIndex := m.recentIndex
+	if err := m.loader.setKDELayoutIndex(ctx, targetIndex); err != nil {
+		return err
+	}
+	if err := m.confirmLayoutIndex(ctx, targetIndex); err != nil {
+		return err
+	}
+
+	m.recentIndex = currentIndex
+	m.logf("recent layout toggled: %s -> %s", m.layouts[currentIndex].Description, m.layouts[targetIndex].Description)
 	return nil
 }
 
@@ -285,6 +421,49 @@ func (l Loader) setKDELayoutIndex(ctx context.Context, index int) error {
 		return fmt.Errorf("KDE rejected layout index %d", index)
 	}
 	return nil
+}
+
+func resolveTapSwitch(ctx context.Context, layouts []LayoutInfo, sourceCode uint16, action config.LayoutSwitchTapAction) (resolvedTapSwitch, TapSwitchInfo, error) {
+	info := TapSwitchInfo{
+		SourceCode:  sourceCode,
+		Action:      action,
+		TargetIndex: -1,
+	}
+	resolved := resolvedTapSwitch{
+		action:      action,
+		targetIndex: -1,
+	}
+
+	if action.Kind == config.LayoutSwitchTapToggleRecent {
+		return resolved, info, nil
+	}
+
+	targetSpec := config.ShortcutLayoutSpec{
+		Layout:  action.Layout,
+		Variant: action.Variant,
+	}
+	targetIndex, targetInfo, err := findTargetLayout(layouts, targetSpec)
+	if err != nil {
+		return resolvedTapSwitch{}, TapSwitchInfo{}, fmt.Errorf("tap_layout_switches %s: %w", config.KeyName(sourceCode), err)
+	}
+	if err := validateXKBLayout(ctx, targetSpec); err != nil {
+		return resolvedTapSwitch{}, TapSwitchInfo{}, fmt.Errorf("tap_layout_switches %s: %w", config.KeyName(sourceCode), err)
+	}
+
+	resolved.target = targetInfo
+	resolved.targetIndex = targetIndex
+	info.Target = targetInfo
+	info.TargetIndex = targetIndex
+	return resolved, info, nil
+}
+
+func sortedTapSwitchSourceCodes(actions map[uint16]config.LayoutSwitchTapAction) []uint16 {
+	sourceCodes := make([]uint16, 0, len(actions))
+	for sourceCode := range actions {
+		sourceCodes = append(sourceCodes, sourceCode)
+	}
+	sort.Slice(sourceCodes, func(i, j int) bool { return sourceCodes[i] < sourceCodes[j] })
+	return sourceCodes
 }
 
 func findTargetLayout(layouts []LayoutInfo, target config.ShortcutLayoutSpec) (int, LayoutInfo, error) {
