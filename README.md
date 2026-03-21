@@ -56,6 +56,8 @@ Config supports:
 
 A full example is in [`kmap.yaml`](./kmap.yaml).
 
+When `shortcut_layout` is set, printable key names in `mappings`, `to_keys`, and `to_chord` are resolved using that layout first. For example, with `us(dvorak)`, `Alt-P` refers to the physical key that would be `R` on QWERTY.
+
 ### Automatic Layout Switching
 
 If `shortcut_layout` is configured, `kmap` validates that the target layout exists in KDE, then temporarily switches KDE to that layout while shortcut modifiers are held. This makes app shortcuts such as `Ctrl+Shift+V` behave consistently even when the typing layout is different (for example, Russian).

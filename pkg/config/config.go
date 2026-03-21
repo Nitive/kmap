@@ -382,6 +382,10 @@ func applyRawConfig(cfg *Runtime, raw rawConfig) error {
 			Options: raw.shortcutLayout.Options,
 		}
 	}
+	keyParser, err := newKeyNameParser(cfg.ShortcutLayout)
+	if err != nil {
+		return err
+	}
 	for code, action := range raw.tapLayoutSwitch {
 		switch code {
 		case KeyLeftAlt, KeyRightAlt:
@@ -399,11 +403,11 @@ func applyRawConfig(cfg *Runtime, raw rawConfig) error {
 	}
 
 	for binding, action := range raw.mappings {
-		layer, keyCode, err := parseBindingKey(binding)
+		layer, keyCode, err := parseBindingKeyWithParser(binding, keyParser)
 		if err != nil {
 			return err
 		}
-		compiled, err := compileAction(action)
+		compiled, err := compileActionWithParser(action, keyParser)
 		if err != nil {
 			return fmt.Errorf("mapping %q: %w", binding, err)
 		}
@@ -451,6 +455,10 @@ func compileTapLayoutSwitchAction(keyName string, action yamlTapLayoutSwitchActi
 }
 
 func compileAction(action rawAction) (CompiledMapping, error) {
+	return compileActionWithParser(action, keyNameParser{})
+}
+
+func compileActionWithParser(action rawAction, parser keyNameParser) (CompiledMapping, error) {
 	setCount := 0
 	if action.passthrough != nil && *action.passthrough {
 		setCount++
@@ -484,7 +492,7 @@ func compileAction(action rawAction) (CompiledMapping, error) {
 	}
 
 	if len(action.toKeys) > 0 {
-		keys, err := parseKeyList(action.toKeys)
+		keys, err := parseKeyListWithParser(action.toKeys, parser)
 		if err != nil {
 			return CompiledMapping{}, err
 		}
@@ -494,7 +502,7 @@ func compileAction(action rawAction) (CompiledMapping, error) {
 		return CompiledMapping{Kind: MappingKeySeq, KeySeq: keys}, nil
 	}
 
-	chordMods, chordKey, err := parseChordSpec(action.toChord)
+	chordMods, chordKey, err := parseChordSpecWithParser(action.toChord, parser)
 	if err != nil {
 		return CompiledMapping{}, err
 	}
@@ -519,7 +527,7 @@ func symbolFromString(s string) (rune, error) {
 	return r, nil
 }
 
-func parseBindingKey(binding string) (string, uint16, error) {
+func parseBindingKeyWithParser(binding string, parser keyNameParser) (string, uint16, error) {
 	parts := strings.Split(binding, "-")
 	if len(parts) != 2 {
 		return "", 0, fmt.Errorf("binding %q must be in <Layer>-<Key> form", binding)
@@ -530,14 +538,14 @@ func parseBindingKey(binding string) (string, uint16, error) {
 		return "", 0, fmt.Errorf("binding %q uses unsupported layer %q", binding, parts[0])
 	}
 
-	keyCode, err := ParseKeyName(parts[1])
+	keyCode, err := parser.Parse(parts[1])
 	if err != nil {
 		return "", 0, fmt.Errorf("binding %q: %w", binding, err)
 	}
 	return layer, keyCode, nil
 }
 
-func parseChordSpec(spec string) ([]uint16, uint16, error) {
+func parseChordSpecWithParser(spec string, parser keyNameParser) ([]uint16, uint16, error) {
 	parts := strings.Split(spec, "-")
 	if len(parts) < 2 {
 		return nil, 0, fmt.Errorf("to_chord %q must be <Mod>-...-<Key>", spec)
@@ -552,7 +560,7 @@ func parseChordSpec(spec string) ([]uint16, uint16, error) {
 		mods = append(mods, modCode)
 	}
 
-	keyCode, err := ParseKeyName(parts[len(parts)-1])
+	keyCode, err := parser.Parse(parts[len(parts)-1])
 	if err != nil {
 		return nil, 0, err
 	}
@@ -574,10 +582,10 @@ func parseModifierName(name string) (uint16, error) {
 	}
 }
 
-func parseKeyList(keys []string) ([]uint16, error) {
+func parseKeyListWithParser(keys []string, parser keyNameParser) ([]uint16, error) {
 	out := make([]uint16, 0, len(keys))
 	for _, k := range keys {
-		code, err := ParseKeyName(k)
+		code, err := parser.Parse(k)
 		if err != nil {
 			return nil, err
 		}

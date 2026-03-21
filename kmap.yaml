@@ -28,59 +28,59 @@ mappings:
     to_symbol: «
   Alt-0:
     to_symbol: »
-  Alt-Minus:
-    to_symbol: “
-  Alt-Equal:
-    to_symbol: ”
-  Alt-Q:
-    to_symbol: "`"
-  Alt-W:
-    to_symbol: ","
-  Alt-E:
-    to_symbol: "."
-  Alt-R:
-    to_symbol: +
-  Alt-P:
-    to_symbol: —
   Alt-LeftBrace:
-    to_symbol: /
-  Alt-D:
-    to_symbol: "="
-  Alt-H:
-    to_symbol: "-"
-  Alt-I:
-    to_symbol: ↑
-  Alt-J:
-    to_symbol: ←
-  Alt-K:
-    to_symbol: ↓
+    to_symbol: “
+  Alt-RightBrace:
+    to_symbol: ”
+  Alt-Apostrophe:
+    to_symbol: "`"
+  Alt-Comma:
+    to_symbol: ","
+  Alt-Dot:
+    to_symbol: "."
+  Alt-P:
+    to_symbol: +
   Alt-L:
-    to_symbol: →
-  Alt-Z:
-    to_symbol: ":"
-  # Alt-Shift-Z:
-  #   to_symbol: ";"
-  Alt-X:
-    to_symbol: "?"
-  Alt-V:
-    to_symbol: "~"
-  Alt-B:
-    to_symbol: ×
+    to_symbol: —
+  Alt-Slash:
+    to_symbol: /
+  Alt-E:
+    to_symbol: "="
+  Alt-D:
+    to_symbol: "-"
+  Alt-C:
+    to_symbol: ↑
+  Alt-H:
+    to_symbol: ←
+  Alt-T:
+    to_symbol: ↓
   Alt-N:
+    to_symbol: →
+  Alt-Semicolon:
+    to_symbol: ":"
+  # Alt-Shift-Semicolon:
+  #   to_symbol: ";"
+  Alt-Q:
+    to_symbol: "?"
+  Alt-K:
+    to_symbol: "~"
+  Alt-X:
+    to_symbol: ×
+  Alt-B:
     to_symbol: "\\"
   Alt-M:
     to_symbol: −
-  Alt-Dot:
+  Alt-V:
     to_symbol: "|"
   Alt-Space:
     to_symbol: " "
 
   # Currency
-  Alt-O:
+  Alt-R:
     to_symbol: ₽
-  Alt-G:
+  Alt-I:
     to_symbol: $
-  # Alt-Shift-D:
+  # Alt-Shift-E:
   #   to_symbol: €
 
   # German
@@ -88,49 +88,49 @@ mappings:
     to_symbol: ä
   # Alt-Shift-A:
   #   to_symbol: Ä
-  Alt-S:
+  Alt-O:
     to_symbol: ö
-  # Alt-Shift-O:
+  # Alt-Shift-R:
   #   to_symbol: Ö
-  Alt-F:
+  Alt-U:
     to_symbol: ü
-  # Alt-Shift-F:
+  # Alt-Shift-U:
   #   to_symbol: Ü
-  Alt-Semicolon:
+  Alt-S:
     to_symbol: ß
-  # Alt-Shift-Semicolon:
+  # Alt-Shift-S:
   #   to_symbol: ẞ
 
   # Caps layer (navigation + app shortcuts)
-  Caps-W:
-    to_chord: Ctrl-Shift-Comma
-  Caps-R:
-    to_chord: Meta-Ctrl-Alt-Shift-R
-  Caps-I:
-    to_keys: [Up]
-  Caps-O:
-    to_chord: Meta-Ctrl-Alt-Shift-O
+  Caps-Comma:
+    to_chord: Ctrl-Shift-W
   Caps-P:
     to_chord: Meta-Ctrl-Alt-Shift-P
+  Caps-C:
+    to_keys: [Up]
+  Caps-R:
+    to_chord: Meta-Ctrl-Alt-Shift-R
+  Caps-L:
+    to_chord: Meta-Ctrl-Alt-Shift-L
   Caps-A:
     to_chord: Meta-Ctrl-Alt-Shift-A
-  Caps-H:
+  Caps-D:
     to_keys: [Backspace]
-  Caps-J:
+  Caps-H:
     to_keys: [Left]
-  Caps-K:
+  Caps-T:
     to_keys: [Down]
-  Caps-L:
-    to_keys: [Right]
-  Caps-Semicolon:
-    to_chord: Meta-Ctrl-Alt-Shift-Semicolon
-  Caps-Apostrophe:
-    to_chord: Meta-Ctrl-Alt-Shift-Apostrophe
   Caps-N:
-    to_chord: Meta-Ctrl-Alt-Shift-N
+    to_keys: [Right]
+  Caps-S:
+    to_chord: Meta-Ctrl-Alt-Shift-S
+  Caps-Minus:
+    to_chord: Meta-Ctrl-Alt-Shift-Minus
+  Caps-B:
+    to_chord: Meta-Ctrl-Alt-Shift-B
   Caps-M:
     to_keys: [Esc]
-  Caps-Comma:
-    to_chord: Meta-Ctrl-Alt-Shift-Comma
-  Caps-Dot:
-    to_chord: Meta-Ctrl-Alt-Shift-Dot
+  Caps-W:
+    to_chord: Meta-Ctrl-Alt-Shift-W
+  Caps-V:
+    to_chord: Meta-Ctrl-Alt-Shift-V

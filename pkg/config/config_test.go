@@ -127,14 +127,74 @@ mappings:
 		t.Fatalf("Alt-Tab kind: got=%d want=%d", altTab.Kind, MappingPassthrough)
 	}
 
-	altJ := cfg.AltMappings[KeyJ]
+	altJ := cfg.AltMappings[KeyC]
 	if altJ.Kind != MappingSymbol || altJ.Symbol != '←' {
 		t.Fatalf("Alt-J mapping mismatch: %#v", altJ)
 	}
 
-	capsH := cfg.CapsMappings[KeyH]
+	capsH := cfg.CapsMappings[KeyJ]
 	if capsH.Kind != MappingRemap || capsH.RemapCode != KeyBackspace {
 		t.Fatalf("Caps-H mapping mismatch: %#v", capsH)
+	}
+}
+
+func TestShortcutLayoutKeyParserUsesLayoutLabels(t *testing.T) {
+	parser, err := newKeyNameParser(&ShortcutLayoutSpec{
+		Layout:  "us",
+		Variant: "dvorak",
+	})
+	if err != nil {
+		t.Fatalf("newKeyNameParser: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		want uint16
+	}{
+		{name: "P", want: KeyR},
+		{name: "Comma", want: KeyW},
+		{name: "Slash", want: KeyLeftBrace},
+		{name: "LeftBrace", want: KeyMinus},
+		{name: "A", want: KeyA},
+	}
+
+	for _, tc := range tests {
+		got, err := parser.Parse(tc.name)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("Parse(%q) mismatch: got=%d want=%d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestCompileActionWithShortcutLayoutParserUsesLayoutLabels(t *testing.T) {
+	parser, err := newKeyNameParser(&ShortcutLayoutSpec{
+		Layout:  "us",
+		Variant: "dvorak",
+	})
+	if err != nil {
+		t.Fatalf("newKeyNameParser: %v", err)
+	}
+
+	compiled, err := compileActionWithParser(rawAction{toChord: "Ctrl-P"}, parser)
+	if err != nil {
+		t.Fatalf("compileActionWithParser chord: %v", err)
+	}
+	if compiled.Kind != MappingChord || compiled.ChordKey != KeyR {
+		t.Fatalf("unexpected chord mapping: %#v", compiled)
+	}
+
+	keySeq, err := compileActionWithParser(rawAction{toKeys: []string{"Comma", "Enter"}}, parser)
+	if err != nil {
+		t.Fatalf("compileActionWithParser key sequence: %v", err)
+	}
+	if keySeq.Kind != MappingKeySeq {
+		t.Fatalf("expected MappingKeySeq, got %d", keySeq.Kind)
+	}
+	if len(keySeq.KeySeq) != 2 || keySeq.KeySeq[0] != KeyW || keySeq.KeySeq[1] != KeyEnter {
+		t.Fatalf("unexpected key sequence: %#v", keySeq.KeySeq)
 	}
 }
 
