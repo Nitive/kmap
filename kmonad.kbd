@@ -27,6 +27,8 @@
   a-lc (around (layer-toggle default) lctl)
   a-lm (around (layer-toggle default) lmet)
   a-rc (around (layer-toggle default) rctl)
+  a-ls (around (layer-toggle default) lsft)
+  a-rs (around (layer-toggle default) rsft)
   clse C-S-,
   a-1p M-C-A-S-r ;; 1password
   a-fi M-C-A-S-n ;; firefox
@@ -116,7 +118,7 @@
   _     1     2     3     4     5     6     7     8     @l«   @l»   @l“   @l”   _
   _     @l`   @l,   @l.   @l+   _     _     _     @l↑   _     @l—   @l/   _     _
   _     _     @l=   _     @lü   _     @l-   @l←   @l↓   @l→   @l;   \_    _
-  _     @l:   @l?   _     @l~   @l×   @l\   @l−   _     |     _     _
+  @a-ls @l:   @l?   _     @l~   @l×   @l\   @l−   _     |     _     @a-rs
   @a-lc @a-lm _           @lnbsp           _     @a-rc
 )
 
@@ -124,6 +126,6 @@
   _     1     2     3     4     5     6     7     8     @r«   @r»   @r“   @r”   _
   _     @r`   @r,   @r.   @r+   _     _     _     @r↑   _     @r—   @r/   _     _
   _     _     @r=   _     @rü   _     @r-   @r←   @r↓   @r→   @r;   \_    _
-  _     @r:   @r?   _     @r~   @r×   @r\   @r−   _     |     _     _
+  @a-ls @r:   @r?   _     @r~   @r×   @r\   @r−   _     |     _     @a-rs
   @a-lc @a-lm _           @rnbsp           _     @a-rc
 )
