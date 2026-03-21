@@ -1,5 +1,4 @@
 install:
-	-sudo systemctl disable --now kmap-built-in-keyboard.service kmap-external-keyboard.service
 	sudo systemctl enable ./services/kmap.service
 	sudo systemctl start kmap.service
 
