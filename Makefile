@@ -5,23 +5,29 @@ include $(MISE_ENV_MK)
 
 export GOCACHE := $(abspath ./tmp/go-cache)
 export GOLANGCI_LINT_CACHE := $(abspath ./tmp/golangci-lint-cache)
+USER_BIN_DIR := $(HOME)/.local/bin
+USER_SYSTEMD_DIR := $(HOME)/.config/systemd/user
 
 .PHONY: install restart uninstall build test test-coverage lint fmt cache-dirs
 
 cache-dirs:
 	mkdir -p $(GOCACHE) $(GOLANGCI_LINT_CACHE)
 
-install:
-	sudo systemctl enable ./services/kmap.service
-	sudo systemctl start kmap.service
+install: build
+	mkdir -p $(USER_BIN_DIR) $(USER_SYSTEMD_DIR)
+	install -m 755 ./bin/kmap $(USER_BIN_DIR)/kmap
+	install -m 644 ./services/kmap.service $(USER_SYSTEMD_DIR)/kmap.service
+	systemctl --user daemon-reload
+	systemctl --user enable --now kmap.service
 
 restart: build
-	./bin/kmap generate-xcompose --config ./kmap.yaml --output ~/.XCompose
-	sudo systemctl restart kmap.service
+	install -m 755 ./bin/kmap $(USER_BIN_DIR)/kmap
+	systemctl --user restart kmap.service
 
 uninstall:
-	sudo systemctl disable --now ./services/kmap.service
-	sudo systemctl daemon-reload
+	systemctl --user disable --now kmap.service || true
+	rm -f $(USER_SYSTEMD_DIR)/kmap.service $(USER_BIN_DIR)/kmap
+	systemctl --user daemon-reload
 
 build: cache-dirs
 	mkdir -p ./bin

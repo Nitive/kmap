@@ -464,6 +464,57 @@ func TestResolveDevicePaths(t *testing.T) {
 	})
 }
 
+func TestSetPauseStateReleasesAndRestoresGrabs(t *testing.T) {
+	inDev := &mockInputDevice{path: "/dev/input/test", grabbed: true}
+	pauseCh := make(chan bool, 1)
+	orc := &orchestrator{
+		opts: StartOptions{Grab: true},
+		pipelines: map[string]pipeline{
+			"/dev/input/test": {
+				path:  "/dev/input/test",
+				inDev: inDev,
+				pause: pauseCh,
+			},
+		},
+	}
+
+	if err := orc.setPauseState(true); err != nil {
+		t.Fatalf("setPauseState(true): %v", err)
+	}
+	if !orc.paused {
+		t.Fatalf("expected paused state to be true")
+	}
+	if inDev.grabbed {
+		t.Fatalf("expected input grab to be released")
+	}
+	select {
+	case paused := <-pauseCh:
+		if !paused {
+			t.Fatalf("expected pause broadcast to be true")
+		}
+	default:
+		t.Fatalf("expected pause broadcast")
+	}
+
+	if err := orc.setPauseState(false); err != nil {
+		t.Fatalf("setPauseState(false): %v", err)
+	}
+	if orc.paused {
+		t.Fatalf("expected paused state to be false")
+	}
+	if !inDev.grabbed {
+		t.Fatalf("expected input grab to be restored")
+	}
+	select {
+	case paused := <-pauseCh:
+		if paused {
+			t.Fatalf("expected pause broadcast to be false")
+		}
+	default:
+		t.Fatalf("expected resume broadcast")
+	}
+}
+
 func TestWatchDirForPath(t *testing.T) {
 	t.Run("uses direct parent when it exists", func(t *testing.T) {
 		root := t.TempDir()

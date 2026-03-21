@@ -14,11 +14,14 @@ type Options struct {
 	ComposeDelay     time.Duration
 	Verbose          bool
 	ShortcutMappings func() map[uint16]uint16
+	PauseSource      <-chan bool
+	InitialPaused    bool
 }
 
 type keyEmitter interface {
 	emitKey(code uint16, value int32) error
 	emitLayoutSwitch(action event.LayoutSwitchRequest) error
+	emitPauseToggle() error
 	tapKey(code uint16, delay time.Duration) error
 }
 
@@ -44,6 +47,11 @@ func (e *channelEmitter) emitLayoutSwitch(action event.LayoutSwitchRequest) erro
 	return nil
 }
 
+func (e *channelEmitter) emitPauseToggle() error {
+	e.out <- event.KeyEvent{Kind: event.KindPauseToggle}
+	return nil
+}
+
 func (e *channelEmitter) tapKey(code uint16, delay time.Duration) error {
 	if err := e.emitKey(code, 1); err != nil {
 		return err
@@ -64,6 +72,7 @@ type remapper struct {
 	out               keyEmitter
 	composeDelay      time.Duration
 	verbose           bool
+	paused            bool
 	suppressAlt       bool
 	suppressCaps      bool
 	altMappings       map[uint16]config.CompiledMapping
@@ -103,20 +112,37 @@ func Start(cfg config.Runtime, in <-chan event.KeyEvent, opts Options) (<-chan e
 	outCh := make(chan event.KeyEvent, 128)
 	errCh := make(chan error, 1)
 	r := newRemapperWithConfig(&channelEmitter{out: outCh}, opts.ComposeDelay, opts.Verbose, opts.ShortcutMappings, cfg)
+	r.paused = opts.InitialPaused
 
 	go func() {
 		defer close(outCh)
 		defer close(errCh)
 
-		for ev := range in {
-			if err := r.handleKey(ev.Code, ev.Value); err != nil {
-				errCh <- err
-				return
-			}
-		}
+		pauseCh := opts.PauseSource
+		for {
+			select {
+			case paused, ok := <-pauseCh:
+				if !ok {
+					pauseCh = nil
+					continue
+				}
+				if err := r.setPaused(paused); err != nil {
+					errCh <- err
+					return
+				}
 
-		if err := r.cleanup(); err != nil {
-			errCh <- err
+			case ev, ok := <-in:
+				if !ok {
+					if err := r.cleanup(); err != nil {
+						errCh <- err
+					}
+					return
+				}
+				if err := r.handleKey(ev.Code, ev.Value); err != nil {
+					errCh <- err
+					return
+				}
+			}
 		}
 	}()
 
@@ -200,13 +226,21 @@ func (r *remapper) logf(format string, args ...any) {
 	}
 }
 
+func (r *remapper) resetRuntimeState() {
+	r.altActive = false
+	r.altCode = 0
+	r.altEmitted = false
+	r.altUsed = false
+	r.capsActive = false
+	r.capsUsed = false
+	r.activeRemapped = make(map[uint16]activeRemap)
+	r.swallowed = make(map[uint16]bool)
+	r.maskedModifiers = make(map[uint16]int)
+	r.modDown = make(map[uint16]bool)
+}
+
 func (r *remapper) cleanup() error {
 	var firstErr error
-	if r.altActive && r.altEmitted {
-		if err := r.out.emitKey(r.altCode, 0); err != nil {
-			firstErr = err
-		}
-	}
 	for srcCode, remap := range r.activeRemapped {
 		if err := r.out.emitKey(remap.code, 0); err != nil && firstErr == nil {
 			firstErr = err
@@ -216,7 +250,34 @@ func (r *remapper) cleanup() error {
 		}
 		delete(r.activeRemapped, srcCode)
 	}
+	modifiers := r.currentEmittedModifierCodes()
+	for i := len(modifiers) - 1; i >= 0; i-- {
+		if err := r.out.emitKey(modifiers[i], 0); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
+}
+
+func (r *remapper) setPaused(paused bool) error {
+	if r.paused == paused {
+		return nil
+	}
+
+	if paused {
+		if err := r.cleanup(); err != nil {
+			return err
+		}
+		r.resetRuntimeState()
+		r.paused = true
+		r.logf("mapper paused")
+		return nil
+	}
+
+	r.resetRuntimeState()
+	r.paused = false
+	r.logf("mapper resumed")
+	return nil
 }
 
 func isAlt(code uint16) bool {
@@ -375,6 +436,15 @@ func (r *remapper) emitKeySequence(keys []uint16) error {
 	return nil
 }
 
+func (r *remapper) emitPauseToggle() error {
+	if err := r.cleanup(); err != nil {
+		return err
+	}
+	r.resetRuntimeState()
+	r.paused = true
+	return r.out.emitPauseToggle()
+}
+
 func (r *remapper) handleMappedAction(code uint16, value int32, mapping config.CompiledMapping, altLayer bool) error {
 	switch mapping.Kind {
 	case config.MappingPassthrough:
@@ -414,6 +484,13 @@ func (r *remapper) handleMappedAction(code uint16, value int32, mapping config.C
 		}
 		r.swallowed[code] = true
 		return r.emitKeySequence(mapping.KeySeq)
+
+	case config.MappingPause:
+		if value != 1 {
+			return nil
+		}
+		r.swallowed[code] = true
+		return r.emitPauseToggle()
 
 	default:
 		return fmt.Errorf("unsupported mapping kind %d", mapping.Kind)
@@ -517,6 +594,23 @@ func (r *remapper) currentEmittedModifierCodes() []uint16 {
 	return emitted
 }
 
+func (r *remapper) pauseMappingForKey(code uint16) bool {
+	if mapping, ok := r.comboMappingForKey(code); ok && mapping.Kind == config.MappingPause {
+		return true
+	}
+	if r.currentBindingModifiers() == config.ModifierAlt {
+		if mapping, ok := r.altMappings[code]; ok && mapping.Kind == config.MappingPause {
+			return true
+		}
+	}
+	if r.currentBindingModifiers() == config.ModifierCaps {
+		if mapping, ok := r.capsMappings[code]; ok && mapping.Kind == config.MappingPause {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *remapper) maskEmittedModifiers() ([]uint16, error) {
 	codes := r.currentEmittedModifierCodes()
 	for i := len(codes) - 1; i >= 0; i-- {
@@ -595,6 +689,12 @@ func (r *remapper) handleComboMapping(code uint16, value int32, mapping config.C
 		}
 		return restoreErr
 
+	case config.MappingPause:
+		if value != 1 {
+			return nil
+		}
+		return r.emitPauseToggle()
+
 	default:
 		return fmt.Errorf("unsupported mapping kind %d", mapping.Kind)
 	}
@@ -654,7 +754,42 @@ func (r *remapper) emitShortcutAwareKey(code uint16, value int32) error {
 	return r.out.emitKey(code, value)
 }
 
+func (r *remapper) updatePauseBindingState(code uint16, value int32) {
+	if isShortcutModifier(code) {
+		switch value {
+		case 1:
+			r.modDown[code] = true
+		case 0:
+			r.modDown[code] = false
+		}
+	}
+
+	if isCaps(code) {
+		switch value {
+		case 1:
+			r.capsActive = true
+		case 0:
+			r.capsActive = false
+		}
+	}
+}
+
+func (r *remapper) handlePausedKey(code uint16, value int32) error {
+	r.updatePauseBindingState(code, value)
+	if value != 1 {
+		return nil
+	}
+	if r.pauseMappingForKey(code) {
+		return r.out.emitPauseToggle()
+	}
+	return nil
+}
+
 func (r *remapper) handleKey(code uint16, value int32) error {
+	if r.paused {
+		return r.handlePausedKey(code, value)
+	}
+
 	if isShortcutModifier(code) {
 		switch value {
 		case 1:

@@ -14,11 +14,14 @@ import (
 type MappingKind int
 
 const (
+	DefaultConfigPath = "/etc/kmap/kmap.yaml"
+
 	MappingPassthrough MappingKind = iota
 	MappingSymbol
 	MappingRemap
 	MappingChord
 	MappingKeySeq
+	MappingPause
 )
 
 type CompiledMapping struct {
@@ -90,6 +93,7 @@ type rawConfig struct {
 
 type rawAction struct {
 	passthrough *bool
+	pause       *bool
 	toSymbol    string
 	toKeys      []string
 	toChord     string
@@ -131,6 +135,7 @@ func (s *stringOrList) UnmarshalYAML(node *yaml.Node) error {
 
 type yamlAction struct {
 	Passthrough *bool        `yaml:"passthrough"`
+	Pause       *bool        `yaml:"pause"`
 	ToSymbol    string       `yaml:"to_symbol"`
 	ToKeys      stringOrList `yaml:"to_keys"`
 	ToChord     string       `yaml:"to_chord"`
@@ -356,6 +361,7 @@ func parseRawConfigYAML(raw string) (rawConfig, error) {
 	for binding, action := range decoded.Mappings {
 		out.mappings[binding] = rawAction{
 			passthrough: action.Passthrough,
+			pause:       action.Pause,
 			toSymbol:    action.ToSymbol,
 			toKeys:      []string(action.ToKeys),
 			toChord:     trimASCIIWhitespace(action.ToChord),
@@ -480,6 +486,9 @@ func compileActionWithParser(action rawAction, parser keyNameParser) (CompiledMa
 	if action.passthrough != nil && *action.passthrough {
 		setCount++
 	}
+	if action.pause != nil && *action.pause {
+		setCount++
+	}
 	if action.toSymbol != "" {
 		setCount++
 	}
@@ -490,7 +499,7 @@ func compileActionWithParser(action rawAction, parser keyNameParser) (CompiledMa
 		setCount++
 	}
 	if setCount == 0 {
-		return CompiledMapping{}, errors.New("no action specified (expected passthrough/to_symbol/to_keys/to_chord)")
+		return CompiledMapping{}, errors.New("no action specified (expected passthrough/pause/to_symbol/to_keys/to_chord)")
 	}
 	if setCount > 1 {
 		return CompiledMapping{}, errors.New("only one action is allowed per mapping")
@@ -498,6 +507,9 @@ func compileActionWithParser(action rawAction, parser keyNameParser) (CompiledMa
 
 	if action.passthrough != nil && *action.passthrough {
 		return CompiledMapping{Kind: MappingPassthrough}, nil
+	}
+	if action.pause != nil && *action.pause {
+		return CompiledMapping{Kind: MappingPause}, nil
 	}
 
 	if action.toSymbol != "" {

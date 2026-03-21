@@ -1,17 +1,12 @@
+[Unit]
+Description=kmap keyboard remapping daemon
+
 [Service]
 Type=simple
-WorkingDirectory=/home/nitive/Develop/keyboard
-ExecStart=/home/nitive/Develop/keyboard/bin/kmap start --config kmap.yaml
+ExecStart=%h/.local/bin/kmap start
 Restart=always
 RestartSec=3
-KillSignal=SIGTERM
-TimeoutStopSec=3s
-SendSIGKILL=yes
 Nice=-20
-User=nitive
-Group=input
-Environment="XDG_RUNTIME_DIR=/run/user/1000"
-Environment="WAYLAND_DISPLAY=wayland-0"
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

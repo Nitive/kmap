@@ -24,6 +24,7 @@ type emittedLayoutSwitch struct {
 type fakeEmitter struct {
 	events         []emittedKey
 	layoutSwitches []emittedLayoutSwitch
+	pauseToggles   int
 	failAfter      int
 	currentCall    int
 }
@@ -43,6 +44,15 @@ func (f *fakeEmitter) emitLayoutSwitch(action event.LayoutSwitchRequest) error {
 		return errors.New("forced emit error")
 	}
 	f.layoutSwitches = append(f.layoutSwitches, emittedLayoutSwitch{sourceCode: action.SourceCode})
+	return nil
+}
+
+func (f *fakeEmitter) emitPauseToggle() error {
+	f.currentCall++
+	if f.failAfter > 0 && f.currentCall >= f.failAfter {
+		return errors.New("forced emit error")
+	}
+	f.pauseToggles++
 	return nil
 }
 
@@ -369,6 +379,87 @@ func TestExactAllModifierMappingIsSupported(t *testing.T) {
 	assertEventsEqual(t, out.events, want)
 }
 
+func TestPauseMappingEmitsPauseToggle(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.CapsMappings[config.KeyBackspace] = config.CompiledMapping{Kind: config.MappingPause}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyCapsLock, 1),
+		evt(config.KeyBackspace, 1),
+		evt(config.KeyBackspace, 0),
+		evt(config.KeyCapsLock, 0),
+	})
+
+	if out.pauseToggles != 1 {
+		t.Fatalf("pause toggle count mismatch: got=%d want=1", out.pauseToggles)
+	}
+	if len(out.events) != 0 {
+		t.Fatalf("expected no key events, got %#v", out.events)
+	}
+}
+
+func TestPausedRemapperIgnoresInputUntilPauseMappingPressedAgain(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.CapsMappings[config.KeyBackspace] = config.CompiledMapping{Kind: config.MappingPause}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+	if err := r.setPaused(true); err != nil {
+		t.Fatalf("setPaused(true): %v", err)
+	}
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyA, 1),
+		evt(config.KeyA, 0),
+		evt(config.KeyCapsLock, 1),
+		evt(config.KeyBackspace, 1),
+		evt(config.KeyBackspace, 0),
+		evt(config.KeyCapsLock, 0),
+	})
+
+	if out.pauseToggles != 1 {
+		t.Fatalf("pause toggle count mismatch: got=%d want=1", out.pauseToggles)
+	}
+	if len(out.events) != 0 {
+		t.Fatalf("expected paused remapper to emit no key events, got %#v", out.events)
+	}
+}
+
+func TestComboPauseMappingReleasesHeldModifiers(t *testing.T) {
+	out := &fakeEmitter{}
+	cfg := config.DefaultRuntime()
+	cfg.SuppressAlt = false
+	cfg.ComboMappings[config.InputBinding{
+		Modifiers: config.ModifierCtrl | config.ModifierAlt | config.ModifierShift | config.ModifierMeta,
+		KeyCode:   config.KeyK,
+	}] = config.CompiledMapping{Kind: config.MappingPause}
+	r := newRemapperWithConfig(out, 0, false, nil, cfg)
+
+	runSequence(t, r, []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyLeftMeta, 1),
+		evt(config.KeyK, 1),
+	})
+
+	want := []emittedKey{
+		evt(config.KeyLeftCtrl, 1),
+		evt(config.KeyLeftAlt, 1),
+		evt(config.KeyLeftShift, 1),
+		evt(config.KeyLeftMeta, 1),
+		evt(config.KeyLeftShift, 0),
+		evt(config.KeyLeftAlt, 0),
+		evt(config.KeyLeftCtrl, 0),
+		evt(config.KeyLeftMeta, 0),
+	}
+	assertEventsEqual(t, out.events, want)
+	if out.pauseToggles != 1 {
+		t.Fatalf("pause toggle count mismatch: got=%d want=1", out.pauseToggles)
+	}
+}
+
 func TestCapsArrowAndBackspaceRemaps(t *testing.T) {
 	out := &fakeEmitter{}
 	r := newConfiguredRemapper(t, out)
@@ -509,6 +600,10 @@ func TestCapsAllMappings(t *testing.T) {
 				}
 			case config.MappingChord:
 				want = chordExpectedEvents(action.ChordMods, action.ChordKey)
+			case config.MappingPause:
+				if out.pauseToggles != 1 {
+					t.Fatalf("pause toggle count mismatch: got=%d want=1", out.pauseToggles)
+				}
 			default:
 				t.Fatalf("unexpected caps mapping kind: %d", action.Kind)
 			}

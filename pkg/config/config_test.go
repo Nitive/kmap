@@ -31,6 +31,8 @@ mappings:
     to_symbol: ←
   Caps-H:
     to_keys: [Backspace]
+  Caps-Backspace:
+    pause: true
 `)
 	if err != nil {
 		t.Fatalf("parseRawConfigYAML: %v", err)
@@ -65,6 +67,9 @@ mappings:
 	if got := raw.mappings["Caps-H"].toKeys; len(got) != 1 || got[0] != "Backspace" {
 		t.Fatalf("unexpected Caps-H to_keys: %#v", got)
 	}
+	if raw.mappings["Caps-Backspace"].pause == nil || !*raw.mappings["Caps-Backspace"].pause {
+		t.Fatalf("expected Caps-Backspace pause=true, got %#v", raw.mappings["Caps-Backspace"].pause)
+	}
 }
 
 func TestApplyRawConfigCompilesMappings(t *testing.T) {
@@ -92,6 +97,8 @@ mappings:
     to_symbol: €
   Caps-H:
     to_keys: [Backspace]
+  Caps-Backspace:
+    pause: true
   Ctrl-Alt-Shift-Meta-K:
     to_chord: Ctrl-Shift-A
 `)
@@ -139,6 +146,9 @@ mappings:
 	capsH := cfg.CapsMappings[KeyJ]
 	if capsH.Kind != MappingRemap || capsH.RemapCode != KeyBackspace {
 		t.Fatalf("Caps-H mapping mismatch: %#v", capsH)
+	}
+	if capsBackspace := cfg.CapsMappings[KeyBackspace]; capsBackspace.Kind != MappingPause {
+		t.Fatalf("Caps-Backspace mapping mismatch: %#v", capsBackspace)
 	}
 
 	parser, err := newKeyNameParser(cfg.ShortcutLayout)
@@ -430,8 +440,8 @@ func TestRepositoryKMapConfigLoads(t *testing.T) {
 	if !cfg.SuppressAlt || !cfg.SuppressCaps {
 		t.Fatalf("expected SuppressAlt/SuppressCaps to be true")
 	}
-	if len(cfg.Devices) == 0 {
-		t.Fatalf("expected devices to be configured in kmap.yaml")
+	if len(cfg.Devices) != 0 {
+		t.Fatalf("expected repository example config to omit machine-specific devices, got %#v", cfg.Devices)
 	}
 
 	if _, ok := cfg.AltMappings[KeyTab]; ok {
@@ -456,6 +466,9 @@ func TestRepositoryKMapConfigLoads(t *testing.T) {
 	}
 	if m := cfg.ComboMappings[binding]; m.Kind != MappingSymbol || m.Symbol != ';' {
 		t.Fatalf("Alt-Shift-Semicolon should map to symbol ;, got %#v", m)
+	}
+	if m := cfg.CapsMappings[KeyBackspace]; m.Kind != MappingPause {
+		t.Fatalf("Caps-Backspace should pause remapping, got %#v", m)
 	}
 }
 

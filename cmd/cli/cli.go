@@ -17,12 +17,12 @@ import (
 )
 
 var (
-	runStartFn       = runStart
-	runSetupKeymapFn = runSetupKeymap
-	generateFn       = xcompose.GenerateFile
-	daemonStartFn    = daemon.Start
-	loadRuntimeFn    = config.LoadRuntime
-	switchValidateFn = func(ctx context.Context, cfg config.Runtime) (shortcut.ValidationInfo, error) {
+	runStartFn            = runStart
+	generateFn            = xcompose.GenerateFile
+	defaultXComposePathFn = xcompose.DefaultOutputPath
+	daemonStartFn         = daemon.Start
+	loadRuntimeFn         = config.LoadRuntime
+	switchValidateFn      = func(ctx context.Context, cfg config.Runtime) (shortcut.ValidationInfo, error) {
 		return shortcut.ValidateSwitchConfig(ctx, cfg)
 	}
 )
@@ -38,11 +38,6 @@ var commands = map[string]cliCommand{
 		Name:        "start",
 		Description: "Run the remapping daemon",
 		Run:         runStartCommand,
-	},
-	"setup-keymap": {
-		Name:        "setup-keymap",
-		Description: "Interactively capture keyboard layout",
-		Run:         func(args []string) error { return runSetupKeymapFn(args) },
 	},
 	"generate-xcompose": {
 		Name:        "generate-xcompose",
@@ -82,6 +77,14 @@ func Run(args []string) error {
 }
 
 func runStart(devicePath string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
+	xcomposePath, err := defaultXComposePathFn()
+	if err != nil {
+		return fmt.Errorf("resolve XCompose path: %w", err)
+	}
+	if err := generateFn(configPath, xcomposePath); err != nil {
+		return fmt.Errorf("generate XCompose %s: %w", xcomposePath, err)
+	}
+
 	return daemonStartFn(daemon.StartOptions{
 		DeviceOverride: devicePath,
 		ConfigPath:     configPath,
@@ -96,7 +99,7 @@ func runStartCommand(args []string) error {
 	fs.SetOutput(os.Stderr)
 
 	devicePath := fs.String("device", "", "input keyboard device path override (optional)")
-	configPath := fs.String("config", "kmap.yaml", "YAML config file path")
+	configPath := fs.String("config", config.DefaultConfigPath, "YAML config file path")
 	composeDelay := fs.Duration("compose-delay", 5*time.Millisecond, "delay between compose key taps")
 	grab := fs.Bool("grab", true, "grab input device so physical events are not duplicated")
 	verbose := fs.Bool("verbose", false, "enable verbose logs")
@@ -123,7 +126,7 @@ func runGenerateXComposeCommand(args []string) error {
 	fs := flag.NewFlagSet("kmap generate-xcompose", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	configPath := fs.String("config", "kmap.yaml", "YAML config file path")
+	configPath := fs.String("config", config.DefaultConfigPath, "YAML config file path")
 	outputPath := fs.String("output", "", "write deterministic XCompose entries to this path")
 
 	fs.Usage = func() {
@@ -197,7 +200,7 @@ func runValidateConfigCommand(args []string) error {
 	fs := flag.NewFlagSet("kmap validate-config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	configPath := fs.String("config", "kmap.yaml", "YAML config file path")
+	configPath := fs.String("config", config.DefaultConfigPath, "YAML config file path")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(fs.Output(), "Usage: kmap validate-config [--config <path>]\n")

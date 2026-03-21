@@ -16,13 +16,35 @@ import (
 )
 
 func TestRunStartForwardsOptions(t *testing.T) {
-	orig := daemonStartFn
+	origStart := daemonStartFn
+	origGenerate := generateFn
+	origXComposePath := defaultXComposePathFn
 	defer func() {
-		daemonStartFn = orig
+		daemonStartFn = origStart
+		generateFn = origGenerate
+		defaultXComposePathFn = origXComposePath
 	}()
+
+	var generated bool
+	defaultXComposePathFn = func() (string, error) {
+		return "/tmp/test.XCompose", nil
+	}
+	generateFn = func(configPath string, outputPath string) error {
+		generated = true
+		if configPath != "custom.yaml" {
+			t.Fatalf("generateFn config mismatch: %q", configPath)
+		}
+		if outputPath != "/tmp/test.XCompose" {
+			t.Fatalf("generateFn output mismatch: %q", outputPath)
+		}
+		return nil
+	}
 
 	var got daemon.StartOptions
 	daemonStartFn = func(opts daemon.StartOptions) error {
+		if !generated {
+			t.Fatalf("expected XCompose to be generated before daemon start")
+		}
 		got = opts
 		return nil
 	}
@@ -49,6 +71,33 @@ func TestRunStartForwardsOptions(t *testing.T) {
 	}
 }
 
+func TestRunStartReturnsGenerateXComposeError(t *testing.T) {
+	origStart := daemonStartFn
+	origGenerate := generateFn
+	origXComposePath := defaultXComposePathFn
+	defer func() {
+		daemonStartFn = origStart
+		generateFn = origGenerate
+		defaultXComposePathFn = origXComposePath
+	}()
+
+	defaultXComposePathFn = func() (string, error) {
+		return "/tmp/test.XCompose", nil
+	}
+	generateFn = func(configPath string, outputPath string) error {
+		return errors.New("boom")
+	}
+	daemonStartFn = func(opts daemon.StartOptions) error {
+		t.Fatalf("daemonStartFn should not be called when XCompose generation fails")
+		return nil
+	}
+
+	err := runStart("", config.DefaultConfigPath, 0, true, false)
+	if err == nil || !strings.Contains(err.Error(), "generate XCompose /tmp/test.XCompose: boom") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRunGenerateXComposeCommandRequiresOutputPath(t *testing.T) {
 	err := runGenerateXComposeCommand(nil)
 	if err == nil {
@@ -69,55 +118,11 @@ func TestRunGenerateXComposeCommandRejectsExtraPositionalArgs(t *testing.T) {
 	}
 }
 
-func TestRunCLIDispatchesSetupKeymapSubcommand(t *testing.T) {
-	origSetup := runSetupKeymapFn
-	origStart := runStartFn
-	defer func() {
-		runSetupKeymapFn = origSetup
-		runStartFn = origStart
-	}()
-
-	var called bool
-	var gotArgs []string
-	runSetupKeymapFn = func(args []string) error {
-		called = true
-		gotArgs = append([]string(nil), args...)
-		return nil
-	}
-	runStartFn = func(string, string, time.Duration, bool, bool) error {
-		t.Fatalf("runStartFn should not be called for setup-keymap subcommand")
-		return nil
-	}
-
-	if err := Run([]string{"setup-keymap", "--output", "out.json"}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !called {
-		t.Fatalf("setup-keymap subcommand was not dispatched")
-	}
-	if len(gotArgs) != 2 || gotArgs[0] != "--output" || gotArgs[1] != "out.json" {
-		t.Fatalf("unexpected setup-keymap args: %#v", gotArgs)
-	}
-}
-
 func TestRunCLIDispatchesStartSubcommand(t *testing.T) {
-	origSetup := runSetupKeymapFn
 	origStart := runStartFn
-	origGenerate := generateFn
 	defer func() {
-		runSetupKeymapFn = origSetup
 		runStartFn = origStart
-		generateFn = origGenerate
 	}()
-
-	runSetupKeymapFn = func(args []string) error {
-		t.Fatalf("runSetupKeymapFn should not be called for start")
-		return nil
-	}
-	generateFn = func(configPath string, outputPath string) error {
-		t.Fatalf("generateFn should not be called for start")
-		return nil
-	}
 
 	var (
 		gotDevice  string
@@ -168,6 +173,48 @@ func TestRunCLIDispatchesStartSubcommand(t *testing.T) {
 	}
 }
 
+func TestRunStartCommandUsesDefaultConfigPath(t *testing.T) {
+	origStart := runStartFn
+	defer func() {
+		runStartFn = origStart
+	}()
+
+	var (
+		gotDevice  string
+		gotConfig  string
+		gotDelay   time.Duration
+		gotGrab    bool
+		gotVerbose bool
+	)
+	runStartFn = func(device, config string, delay time.Duration, grab, verbose bool) error {
+		gotDevice = device
+		gotConfig = config
+		gotDelay = delay
+		gotGrab = grab
+		gotVerbose = verbose
+		return nil
+	}
+
+	if err := runStartCommand(nil); err != nil {
+		t.Fatalf("runStartCommand: %v", err)
+	}
+	if gotDevice != "" {
+		t.Fatalf("device mismatch: %q", gotDevice)
+	}
+	if gotConfig != config.DefaultConfigPath {
+		t.Fatalf("default config mismatch: %q", gotConfig)
+	}
+	if gotDelay != 5*time.Millisecond {
+		t.Fatalf("delay mismatch: %s", gotDelay)
+	}
+	if !gotGrab {
+		t.Fatalf("grab should default to true")
+	}
+	if gotVerbose {
+		t.Fatalf("verbose should default to false")
+	}
+}
+
 func TestRunStartCommandRejectsNegativeComposeDelay(t *testing.T) {
 	err := runStartCommand([]string{"--compose-delay", "-1ms"})
 	if err == nil {
@@ -179,19 +226,13 @@ func TestRunStartCommandRejectsNegativeComposeDelay(t *testing.T) {
 }
 
 func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
-	origSetup := runSetupKeymapFn
 	origStart := runStartFn
 	origGenerate := generateFn
 	defer func() {
-		runSetupKeymapFn = origSetup
 		runStartFn = origStart
 		generateFn = origGenerate
 	}()
 
-	runSetupKeymapFn = func(args []string) error {
-		t.Fatalf("runSetupKeymapFn should not be called for generate-xcompose")
-		return nil
-	}
 	runStartFn = func(string, string, time.Duration, bool, bool) error {
 		t.Fatalf("runStartFn should not be called for generate-xcompose")
 		return nil
@@ -211,7 +252,7 @@ func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
 
 	err := Run([]string{
 		"generate-xcompose",
-		"--config", "kmap.yaml",
+		"--config", "custom.yaml",
 		"--output", "/tmp/generated.XCompose",
 	})
 	if err != nil {
@@ -220,7 +261,7 @@ func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
 	if !called {
 		t.Fatalf("generateFn was not called")
 	}
-	if gotConfig != "kmap.yaml" {
+	if gotConfig != "custom.yaml" {
 		t.Fatalf("config mismatch: %q", gotConfig)
 	}
 	if gotOutput != "/tmp/generated.XCompose" {
@@ -253,11 +294,21 @@ func TestRunGenerateXComposeSupportsPositionalOutput(t *testing.T) {
 	if !called {
 		t.Fatalf("generateFn was not called")
 	}
-	if gotConfig != "kmap.yaml" {
+	if gotConfig != config.DefaultConfigPath {
 		t.Fatalf("default config mismatch: %q", gotConfig)
 	}
 	if gotOutput != "/tmp/generated.XCompose" {
 		t.Fatalf("output mismatch: %q", gotOutput)
+	}
+}
+
+func TestRunRemovedSetupKeymapCommandFails(t *testing.T) {
+	err := Run([]string{"setup-keymap"})
+	if err == nil {
+		t.Fatalf("expected unknown command error")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

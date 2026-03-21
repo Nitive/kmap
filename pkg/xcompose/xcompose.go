@@ -42,6 +42,17 @@ func GenerateFile(configPath string, outputPath string) error {
 	return nil
 }
 
+func DefaultOutputPath() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	if strings.TrimSpace(homeDir) == "" {
+		return "", errors.New("home directory is empty")
+	}
+	return filepath.Join(homeDir, ".XCompose"), nil
+}
+
 func collectMappedSymbols(cfg config.Runtime) ([]rune, error) {
 	set := make(map[rune]struct{})
 	addMap := func(mappings map[uint16]config.CompiledMapping) error {

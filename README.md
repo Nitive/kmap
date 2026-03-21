@@ -2,155 +2,162 @@
 
 `kmap` is a low-level Linux keyboard remapper written in Go.
 
-It reads events from one or more real keyboard input devices, applies mapping rules from YAML, and emits remapped key events through a virtual keyboard (`/dev/uinput`).
+It reads events from one or more real keyboard devices, applies mapping rules from YAML, and emits remapped key events through a virtual keyboard on `/dev/uinput`.
 
-The project is designed to make symbol and layer mappings deterministic across keyboard layouts (QWERTY, Dvorak, Russian, etc.), including on Wayland.
+## Quick Start
 
-## What This Project Is
+1. Build the binary:
 
-`kmap` is a daemon + CLI toolkit with three main jobs:
+```bash
+make build
+```
 
-1. Run a remapping daemon (`kmap start`)
-2. Capture a keyboard layout map interactively (`kmap setup-keymap`)
-3. Generate deterministic XCompose entries for mapped Unicode symbols (`kmap generate-xcompose`)
-4. Validate config and shortcut layout loading (`kmap validate-config`)
+2. Install the active config at `/etc/kmap/kmap.yaml`:
 
-## How It Works
+```bash
+sudo install -d /etc/kmap
+sudo install -m 644 ./kmap.yaml /etc/kmap/kmap.yaml
+```
 
-### Runtime Architecture
+3. Edit `/etc/kmap/kmap.yaml` for your machine:
+   - set `devices:` if you want anything other than the built-in default device path
+   - adjust `shortcut_layout`, `tap_layout_switches`, and `mappings`
 
-When you run `kmap start`, the app does this:
+4. Validate the config:
 
-1. Parse YAML config (`kmap.yaml` by default)
-2. Resolve input devices (`--device` override or `devices:` from config)
-3. For each device, run an independent pipeline:
-   - `pkg/daemon/input`: read Linux input events
-   - `pkg/daemon/mapper`: apply Alt/Caps layer mappings and compose logic
-   - `pkg/daemon/output`: send remapped events through a virtual keyboard
+```bash
+./bin/kmap validate-config
+```
 
-This means multiple keyboards can be handled independently while sharing the same mapping rules.
+5. Start the daemon:
 
-### Modules
+```bash
+./bin/kmap start
+```
 
-- `pkg/config`: YAML parsing and mapping compilation
-- `pkg/daemon/input`: input device reader + optional EVIOCGRAB
-- `pkg/daemon/mapper`: remap state machine (Alt/Caps layers, passthrough, chords, symbol compose)
-- `pkg/daemon/output`: virtual keyboard emitter via `/dev/uinput`
-- `pkg/xcompose`: deterministic XCompose generator
-- `cmd/cli`: CLI command handlers
-- `cmd/main.go`: single executable entrypoint
+`kmap start` automatically generates `~/.XCompose` before the daemon begins remapping, so `to_symbol` mappings stay aligned with the running config.
 
-### Mapping Model
+## Requirements
 
-Config supports:
+- Linux with access to `/dev/input/...` keyboard devices
+- access to `/dev/uinput`
+- if you use `shortcut_layout` or `tap_layout_switches`, KDE with `qdbus6`
 
-- `suppress_keydown`: layer keys whose down event is delayed (e.g. `Alt`, `Caps`)
-- `devices`: one or more `/dev/input/...` device paths
-- `shortcut_layout`: canonical layout used for modifier-based shortcuts
-- `tap_layout_switches`: tap-only layout switch actions for `LAlt`, `RAlt`, and `Caps`
-- `mappings` with per-layer bindings, for example:
-  - `to_symbol: ←`
-  - `to_keys: [Left]`
-  - `to_chord: Meta-Ctrl-Alt-Shift-R`
-  - `passthrough: true`
+If you run `kmap` as an unprivileged user, that user must have permission to read the input devices and open `/dev/uinput`.
 
-A full example is in [`kmap.yaml`](./kmap.yaml).
+## Config
 
-When `shortcut_layout` is set, printable key names in `mappings`, `to_keys`, and `to_chord` are resolved using that layout first. For example, with `us(dvorak)`, `Alt-P` refers to the physical key that would be `R` on QWERTY.
+The default config path is:
 
-### Automatic Layout Switching
+```text
+/etc/kmap/kmap.yaml
+```
 
-If `shortcut_layout` is configured, `kmap` validates that the target layout exists in KDE, then temporarily switches KDE to that layout while shortcut modifiers are held. This makes app shortcuts such as `Ctrl+Shift+V` behave consistently even when the typing layout is different (for example, Russian).
+You can override it with `--config <path>` on any command.
+
+The repository root [`kmap.yaml`](./kmap.yaml) is an example config you can copy and adapt.
+
+### Device Selection
+
+`devices:` accepts one or more `/dev/input/...` paths. Good stable choices are usually under `/dev/input/by-id/` or `/dev/input/by-path/`.
+
+If `devices:` is omitted, `kmap` falls back to the built-in default path:
+
+```text
+/dev/input/by-path/platform-i8042-serio-0-event-kbd
+```
+
+### Mapping Actions
+
+Each mapping supports exactly one action:
+
+- `passthrough: true`
+- `pause: true`
+- `to_symbol: …`
+- `to_keys: [...]`
+- `to_chord: Ctrl-Shift-X`
+
+Bindings support exact modifier combinations, including combinations such as `Ctrl-Alt-Shift-Meta-K`.
+
+### Pause Safety Switch
+
+You can define a hotkey that pauses remapping and releases input grabs. While paused, physical keyboards pass through directly. Press the same hotkey again to resume.
 
 Example:
 
 ```yaml
-shortcut_layout:
-  layout: us
-  variant: dvorak
-
-tap_layout_switches:
-  LAlt:
-    layout: us
-    variant: dvorak
-  RAlt:
-    layout: ru
-  Caps:
-    toggle_recent: true
+mappings:
+  Caps-Backspace:
+    pause: true
 ```
 
-With that enabled, `kmap` keeps normal typing on the active KDE layout, but switches to Dvorak for shortcuts and restores the previous layout when the shortcut finishes.
+This is intended as a safety mechanism if a bad mapping leaves the daemon in an unusable state.
 
-`tap_layout_switches` are persistent layout changes:
-
-- tapping `LAlt` or `RAlt` can switch directly to a configured KDE layout
-- tapping `Caps` can toggle back to the most recently used persistent layout
-- only a clean tap triggers the switch; using the key as an Alt/Caps layer key does not
-
-Current constraints:
-
-- KDE-only: uses `org.kde.keyboard` via `qdbus6`
-- active layout changes are detected at runtime, but restart `kmap` after changing KDE layout configuration
-- shortcut handling is global across all keyboards because KDE layout state is global
-
-### Unicode / Compose Strategy
-
-For `to_symbol`, `kmap` emits compose key sequences using a deterministic decimal-encoded format. `kmap generate-xcompose` writes matching XCompose rules so Unicode output is layout-independent.
-
-## Why This Project Exists
-
-This project exists to provide a predictable remapping layer that is:
-
-- Layout-agnostic: mappings are tied to physical keycodes, not text layout
-- Wayland-friendly: works through Linux input/uinput instead of WM-specific shortcuts
-- Deterministic: symbol output is explicit and reproducible via generated XCompose rules
-- Device-aware: can run on multiple keyboards independently
-- Config-driven: behavior is controlled in YAML, not hardcoded
-
-In short: `kmap` gives you stable key behavior across layouts, apps, and compositors.
-
-## CLI
+## Commands
 
 ```bash
-kmap start [--config kmap.yaml] [--device /dev/input/...]
-kmap setup-keymap --layout us(dvorak) > layouts/us-dvorak.json
-kmap generate-xcompose --output ~/.XCompose [--config kmap.yaml]
-kmap validate-config [--config kmap.yaml]
+kmap start [--config /etc/kmap/kmap.yaml] [--device /dev/input/...]
+kmap generate-xcompose --output ~/.XCompose [--config /etc/kmap/kmap.yaml]
+kmap validate-config [--config /etc/kmap/kmap.yaml]
 ```
 
-Run command help:
+Run help for details:
 
 ```bash
 kmap <command> -h
 ```
 
-### Layout Capture
+## Systemd User Service
 
-`kmap setup-keymap` now captures the bytes your terminal receives for each logical key, which makes the output layout-dependent and suitable for comparing `us(dvorak)`, `ru`, and other KDE layouts.
+The repository includes a generic user service in [`services/kmap.service`](./services/kmap.service).
 
-- Prompts are written to stderr; JSON goes to stdout by default.
-- Press Enter to arm a capture, then press the requested key.
-- For non-Enter keys, pressing Enter after arming skips that key.
-- `Ctrl+C` or `SIGTERM` aborts immediately.
-- If the daemon is running, `setup-keymap` asks it to temporarily release grabbed devices and restores them on exit.
-
-Example:
+Install it with:
 
 ```bash
-kmap setup-keymap --layout us(dvorak) > layouts/us-dvorak.json
-kmap setup-keymap --layout ru > layouts/ru.json
+make install
 ```
 
-## Build / Run
+This installs:
+
+- `~/.local/bin/kmap`
+- `~/.config/systemd/user/kmap.service`
+
+and enables the service with `systemctl --user`.
+
+Useful targets:
+
+```bash
+make restart
+make uninstall
+```
+
+## How It Works
+
+When you run `kmap start`, the app does this:
+
+1. Load `/etc/kmap/kmap.yaml` by default.
+2. Generate `~/.XCompose` from all configured `to_symbol` mappings.
+3. Resolve input devices from `--device`, `devices:`, or the built-in default device path.
+4. Start one independent input pipeline per device.
+5. Watch unavailable devices and capture them when they appear.
+
+Each pipeline uses:
+
+- `pkg/daemon/input`: read Linux input events and manage EVIOCGRAB
+- `pkg/daemon/mapper`: apply remapping, compose emission, and pause toggle detection
+- `pkg/daemon/output`: send remapped events through a virtual keyboard
+- `pkg/daemon/shortcut`: optional KDE shortcut layout switching
+
+## Layout Switching
+
+If `shortcut_layout` is configured, `kmap` validates that the target layout exists in KDE and temporarily switches to that layout while shortcut modifiers are held. This keeps shortcuts stable even when your typing layout is different.
+
+`tap_layout_switches` can also assign tap-only actions to `LAlt`, `RAlt`, and `Caps`.
+
+## Development
 
 ```bash
 make build
-./bin/kmap start --config ./kmap.yaml
+make test
+make lint
 ```
-
-The repository also includes:
-
-- `kmap-start.sh`
-- `services/kmap.service`
-
-for systemd-based startup.

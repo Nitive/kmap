@@ -5,6 +5,7 @@ type Kind int
 const (
 	KindKey Kind = iota
 	KindLayoutSwitch
+	KindPauseToggle
 )
 
 type LayoutSwitchRequest struct {

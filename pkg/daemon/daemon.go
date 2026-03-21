@@ -47,6 +47,7 @@ type pipeline struct {
 
 	inDev inputDevice
 	outKB outputDevice
+	pause chan bool
 
 	inErr       <-chan error
 	mapErr      <-chan error
@@ -59,6 +60,12 @@ type moduleEvent struct {
 	path   string
 	module string
 	err    error
+}
+
+type controlEvent struct {
+	id   uint64
+	path string
+	kind event.Kind
 }
 
 type inputFactory func(path string, grab bool) (inputDevice, <-chan event.KeyEvent, <-chan error, error)
@@ -81,6 +88,7 @@ type orchestrator struct {
 	pipelines      map[string]pipeline
 	pendingPaths   map[string]struct{}
 	moduleEventCh  chan moduleEvent
+	controlEventCh chan controlEvent
 	shortcutMake   shortcutSwitchFactory
 	shortcutWrap   shortcutSwitcher
 	retrySource    <-chan struct{}
@@ -88,6 +96,7 @@ type orchestrator struct {
 	nextPipelineID uint64
 	grabEnabled    bool
 	capsReleased   bool
+	paused         bool
 	stopCh         chan struct{}
 	stopOnce       sync.Once
 }
@@ -201,6 +210,11 @@ func (o *orchestrator) run() error {
 
 		case mErr := <-o.moduleEventCh:
 			if err := o.handleModuleEvent(mErr); err != nil {
+				return err
+			}
+
+		case ctrl := <-o.controlEventCh:
+			if err := o.handleControlEvent(ctrl); err != nil {
 				return err
 			}
 
@@ -340,6 +354,9 @@ func (o *orchestrator) ensureState() {
 		size := len(o.devicePaths)*8 + 8
 		o.moduleEventCh = make(chan moduleEvent, size)
 	}
+	if o.controlEventCh == nil {
+		o.controlEventCh = make(chan controlEvent, len(o.devicePaths)*4+4)
+	}
 	if o.stopCh == nil {
 		o.stopCh = make(chan struct{})
 	}
@@ -349,6 +366,13 @@ func (o *orchestrator) ensureState() {
 func (o *orchestrator) sendModuleEvent(ev moduleEvent) {
 	select {
 	case o.moduleEventCh <- ev:
+	case <-o.stopCh:
+	}
+}
+
+func (o *orchestrator) sendControlEvent(ev controlEvent) {
+	select {
+	case o.controlEventCh <- ev:
 	case <-o.stopCh:
 	}
 }
@@ -383,12 +407,17 @@ func (o *orchestrator) startPipeline(path string) error {
 		return startErr
 	}
 
+	pipelineID := o.nextPipelineID + 1
+	pauseCh := make(chan bool, 1)
 	mappedCh, mapErr := mapper.Start(o.cfg, inCh, mapper.Options{
-		ComposeDelay: o.opts.ComposeDelay,
-		Verbose:      o.opts.Verbose,
+		ComposeDelay:  o.opts.ComposeDelay,
+		Verbose:       o.opts.Verbose,
+		PauseSource:   pauseCh,
+		InitialPaused: o.paused,
 	})
 
-	outCh := (<-chan event.KeyEvent)(mappedCh)
+	outCh := o.wrapControlEvents(path, pipelineID, mappedCh)
+
 	var shortcutErr <-chan error
 	if o.shortcutWrap != nil {
 		outCh, shortcutErr = o.shortcutWrap.Wrap(outCh)
@@ -400,12 +429,13 @@ func (o *orchestrator) startPipeline(path string) error {
 		return startErr
 	}
 
-	o.nextPipelineID++
+	o.nextPipelineID = pipelineID
 	p := pipeline{
-		id:          o.nextPipelineID,
+		id:          pipelineID,
 		path:        path,
 		inDev:       inDev,
 		outKB:       outKB,
+		pause:       pauseCh,
 		inErr:       inErr,
 		mapErr:      mapErr,
 		shortcutErr: shortcutErr,
@@ -479,6 +509,28 @@ func (o *orchestrator) removePipeline(path string) {
 	}
 }
 
+func (o *orchestrator) wrapControlEvents(path string, id uint64, in <-chan event.KeyEvent) <-chan event.KeyEvent {
+	out := make(chan event.KeyEvent, 128)
+
+	go func() {
+		defer close(out)
+		for ev := range in {
+			if ev.Kind == event.KindPauseToggle {
+				o.sendControlEvent(controlEvent{path: path, id: id, kind: ev.Kind})
+				continue
+			}
+
+			select {
+			case out <- ev:
+			case <-o.stopCh:
+				return
+			}
+		}
+	}()
+
+	return out
+}
+
 func (o *orchestrator) markUnavailable(path string, err error) {
 	if _, exists := o.pendingPaths[path]; exists {
 		return
@@ -497,6 +549,64 @@ func (o *orchestrator) markDisconnected(path string, err error) {
 		return
 	}
 	log.Printf("input device disconnected, waiting to recapture: %s", path)
+}
+
+func (o *orchestrator) queuePauseState(p pipeline, paused bool) {
+	if p.pause == nil {
+		return
+	}
+	select {
+	case p.pause <- paused:
+	default:
+		select {
+		case <-p.pause:
+		default:
+		}
+		p.pause <- paused
+	}
+}
+
+func (o *orchestrator) setPauseState(paused bool) error {
+	if o.paused == paused {
+		return nil
+	}
+
+	if paused {
+		for _, p := range o.pipelines {
+			o.queuePauseState(p, true)
+		}
+		o.paused = true
+		if err := o.setGrabState(false); err != nil {
+			o.paused = false
+			for _, p := range o.pipelines {
+				o.queuePauseState(p, false)
+			}
+			return err
+		}
+		log.Printf("kmap paused: input grabs released and remapped output suspended")
+		return nil
+	}
+
+	if err := o.setGrabState(o.opts.Grab); err != nil {
+		return err
+	}
+	o.paused = false
+	for _, p := range o.pipelines {
+		o.queuePauseState(p, false)
+	}
+	log.Printf("kmap resumed: input grabs restored and remapping active")
+	return nil
+}
+
+func (o *orchestrator) handleControlEvent(ev controlEvent) error {
+	p, ok := o.pipelines[ev.path]
+	if !ok || p.id != ev.id {
+		return nil
+	}
+	if ev.kind != event.KindPauseToggle {
+		return fmt.Errorf("unsupported control event kind %d", ev.kind)
+	}
+	return o.setPauseState(!o.paused)
 }
 
 func (o *orchestrator) releaseCapsIfNeeded(p pipeline) error {

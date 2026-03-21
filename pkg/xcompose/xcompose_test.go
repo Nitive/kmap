@@ -36,6 +36,19 @@ func TestBuildContentUsesScopedHeader(t *testing.T) {
 	}
 }
 
+func TestDefaultOutputPathUsesHomeDirectory(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	got, err := DefaultOutputPath()
+	if err != nil {
+		t.Fatalf("DefaultOutputPath: %v", err)
+	}
+	if got != filepath.Join(homeDir, ".XCompose") {
+		t.Fatalf("unexpected output path: got=%q want=%q", got, filepath.Join(homeDir, ".XCompose"))
+	}
+}
+
 func TestGenerateXComposeFileWritesExpectedEntries(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "XCompose")
 	configPath := filepath.Join("..", "..", "kmap.yaml")

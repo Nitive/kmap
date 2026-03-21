@@ -1,7 +1,10 @@
-# Input devices to listen on.
-devices:
-  - /dev/input/by-path/platform-i8042-serio-0-event-kbd
-  - /dev/input/by-id/usb-04d9_USB-HID_Keyboard-event-kbd
+# Example config for kmap.
+# Install your active config at /etc/kmap/kmap.yaml and adjust layouts, devices,
+# and mappings for your machine.
+#
+# Omit devices to use the default built-in keyboard path, or uncomment and edit:
+# devices:
+#   - /dev/input/by-id/usb-example_Keyboard-event-kbd
 
 shortcut_layout:
   layout: us
@@ -116,6 +119,8 @@ mappings:
     to_chord: Meta-Ctrl-Alt-Shift-A
   Caps-D:
     to_keys: [Backspace]
+  Caps-Backspace:
+    pause: true
   Caps-H:
     to_keys: [Left]
   Caps-T:
