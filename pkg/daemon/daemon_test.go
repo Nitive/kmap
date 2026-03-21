@@ -116,11 +116,8 @@ func TestOrchestrator(t *testing.T) {
 
 		select {
 		case err := <-errCh:
-			if err == nil || !errors.Is(err, errors.New("module error")) {
-				// errors.Is might not work with newly created errors if not wrapped properly
-				if !errors.As(err, &err) && err.Error() != "input module /dev/input/test: module error" {
-					t.Fatalf("unexpected error: %v", err)
-				}
+			if err == nil || err.Error() != "input module /dev/input/test: module error" {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		case <-time.After(100 * time.Millisecond):
 			t.Fatal("timed out waiting for orc.run() to return")

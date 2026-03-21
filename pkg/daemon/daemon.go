@@ -7,11 +7,11 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"keyboard/pkg/config"
+	"keyboard/pkg/daemon/event"
 	"keyboard/pkg/daemon/input"
 	"keyboard/pkg/daemon/mapper"
 	"keyboard/pkg/daemon/output"

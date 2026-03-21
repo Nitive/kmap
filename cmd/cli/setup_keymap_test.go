@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/binary"
-	"io"
 	"testing"
 	"time"
 

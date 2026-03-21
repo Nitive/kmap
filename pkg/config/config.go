@@ -486,6 +486,10 @@ func normalizeToken(s string) string {
 	return strings.ToUpper(strings.Trim(s, " \t\r\n"))
 }
 
+func trimASCIIWhitespace(s string) string {
+	return strings.Trim(s, " \t\r\n")
+}
+
 func normalizeDevicePaths(paths []string) ([]string, error) {
 	if len(paths) == 0 {
 		return nil, nil
