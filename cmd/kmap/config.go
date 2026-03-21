@@ -191,39 +191,12 @@ var keyCodeByName = map[string]uint16{
 }
 
 func defaultRuntimeConfig() runtimeConfig {
-	cfg := runtimeConfig{
+	return runtimeConfig{
 		suppressAlt:  true,
 		suppressCaps: true,
-		altMappings:  make(map[uint16]compiledMapping, len(symbolMap)),
-		capsMappings: make(map[uint16]compiledMapping, len(capsActionMap)),
+		altMappings:  make(map[uint16]compiledMapping),
+		capsMappings: make(map[uint16]compiledMapping),
 	}
-
-	for code, sym := range symbolMap {
-		cfg.altMappings[code] = compiledMapping{
-			kind:   mappingSymbol,
-			symbol: sym,
-		}
-	}
-
-	for code, action := range capsActionMap {
-		if action.remapCode != 0 {
-			cfg.capsMappings[code] = compiledMapping{
-				kind:      mappingRemap,
-				remapCode: action.remapCode,
-			}
-			continue
-		}
-
-		mods := make([]uint16, len(action.chordMods))
-		copy(mods, action.chordMods)
-		cfg.capsMappings[code] = compiledMapping{
-			kind:      mappingChord,
-			chordKey:  action.chordKey,
-			chordMods: mods,
-		}
-	}
-
-	return cfg
 }
 
 func loadRuntimeConfig(path string) (runtimeConfig, error) {

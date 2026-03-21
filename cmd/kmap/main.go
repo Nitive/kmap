@@ -115,6 +115,7 @@ const (
 	iocDirShift  = iocSizeShift + iocSizeBits
 
 	iocWrite = 1
+	iocRead  = 2
 )
 
 func ioc(dir, typ, nr, size uintptr) uintptr {
@@ -129,12 +130,21 @@ func iow(typ, nr, size uintptr) uintptr {
 	return ioc(iocWrite, typ, nr, size)
 }
 
+func ior(typ, nr, size uintptr) uintptr {
+	return ioc(iocRead, typ, nr, size)
+}
+
 var (
 	eviocgrab    = iow(uintptr('E'), 0x90, 4)
+	eviocgled    = ior(uintptr('E'), 0x19, 1)
 	uiSetEvBit   = iow(uintptr('U'), 100, 4)
 	uiSetKeyBit  = iow(uintptr('U'), 101, 4)
 	uiDevCreate  = iocNone(uintptr('U'), 1)
 	uiDevDestroy = iocNone(uintptr('U'), 2)
+)
+
+const (
+	ledCapsLock = 1
 )
 
 type inputEvent struct {
@@ -281,51 +291,6 @@ type symbolAction struct {
 	symbol rune
 }
 
-type capsAction struct {
-	remapCode uint16
-	chordKey  uint16
-	chordMods []uint16
-}
-
-var symbolMap = map[uint16]symbolAction{
-	// Top row
-	key9:     {symbol: '«'},
-	key0:     {symbol: '»'},
-	keyMinus: {symbol: '“'},
-	keyEqual: {symbol: '”'},
-
-	// Q row
-	keyQ:         {symbol: '`'},
-	keyW:         {symbol: ','},
-	keyE:         {symbol: '.'},
-	keyR:         {symbol: '+'},
-	keyI:         {symbol: '↑'},
-	keyP:         {symbol: '—'},
-	keyLeftBrace: {symbol: '/'},
-
-	// A row
-	keyS:          {symbol: '='},
-	keyF:          {symbol: 'ü'},
-	keyH:          {symbol: '-'},
-	keyJ:          {symbol: '←'},
-	keyK:          {symbol: '↓'},
-	keyL:          {symbol: '→'},
-	keySemicolon:  {symbol: ';'},
-	keyApostrophe: {symbol: '\\'},
-
-	// Z row
-	keyZ:   {symbol: ':'},
-	keyX:   {symbol: '?'},
-	keyV:   {symbol: '~'},
-	keyB:   {symbol: '×'},
-	keyN:   {symbol: '\\'},
-	keyM:   {symbol: '−'},
-	keyDot: {symbol: '|'},
-
-	// Space
-	keySpace: {symbol: '\u00a0'}, // NBSP
-}
-
 var composeDigitKey = map[rune]uint16{
 	'0': key0,
 	'1': key1,
@@ -367,35 +332,6 @@ func composeRuneKey(ch rune) (uint16, error) {
 	}
 
 	return 0, fmt.Errorf("compose code contains unsupported character %q", ch)
-}
-
-var (
-	modsHyper     = []uint16{keyLeftMeta, keyLeftCtrl, keyLeftAlt, keyLeftShift}
-	modsCtrlShift = []uint16{keyLeftCtrl, keyLeftShift}
-)
-
-var capsActionMap = map[uint16]capsAction{
-	// Row with `tab q w e r t y u i o p [ ] \`
-	keyW: {chordKey: keyComma, chordMods: modsCtrlShift}, // C-S-, (close tab/window)
-	keyR: {chordKey: keyR, chordMods: modsHyper},         // 1password
-	keyI: {remapCode: keyUp},
-	keyO: {chordKey: keyO, chordMods: modsHyper}, // kitty
-	keyP: {chordKey: keyP, chordMods: modsHyper}, // neovide
-
-	// Row with `caps a s d f g h j k l ; ' ret`
-	keyA:          {chordKey: keyA, chordMods: modsHyper}, // spotify
-	keyH:          {remapCode: keyBackspace},
-	keyJ:          {remapCode: keyLeft},
-	keyK:          {remapCode: keyDown},
-	keyL:          {remapCode: keyRight},
-	keySemicolon:  {chordKey: keySemicolon, chordMods: modsHyper},  // editor
-	keyApostrophe: {chordKey: keyApostrophe, chordMods: modsHyper}, // sublime
-
-	// Row with `lsft z x c v b n m , . / rsft`
-	keyN:     {chordKey: keyN, chordMods: modsHyper}, // firefox
-	keyM:     {remapCode: keyEsc},
-	keyComma: {chordKey: keyComma, chordMods: modsHyper}, // telegram (< via Shift)
-	keyDot:   {chordKey: keyDot, chordMods: modsHyper},   // mattermost (> via Shift)
 }
 
 type remapper struct {
@@ -751,6 +687,24 @@ func readInputEvent(r io.Reader) (inputEvent, error) {
 	return ev, err
 }
 
+func isCapsLockEnabled(inFD int) (bool, error) {
+	var leds [1]byte
+	if err := ioctl(inFD, eviocgled, uintptr(unsafe.Pointer(&leds[0]))); err != nil {
+		return false, err
+	}
+	return (leds[0] & (1 << ledCapsLock)) != 0, nil
+}
+
+func releaseCapsOnStart(out keyEmitter, cfg runtimeConfig, capsEnabled bool, delay time.Duration) error {
+	if len(cfg.capsMappings) == 0 {
+		return nil
+	}
+	if !capsEnabled {
+		return nil
+	}
+	return out.tapKey(keyCapsLock, delay)
+}
+
 func run(devicePath string, configPath string, composeDelay time.Duration, grab bool, verbose bool) error {
 	in, err := os.OpenFile(devicePath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -779,6 +733,14 @@ func run(devicePath string, configPath string, composeDelay time.Duration, grab 
 	}
 	defer out.close()
 
+	capsEnabled, err := isCapsLockEnabled(inFD)
+	if err != nil {
+		log.Printf("could not query caps-lock state: %v", err)
+	}
+	if err := releaseCapsOnStart(out, cfg, capsEnabled, composeDelay); err != nil {
+		return fmt.Errorf("release caps on start: %w", err)
+	}
+
 	rem := newRemapperWithConfig(out, composeDelay, verbose, cfg)
 	defer rem.cleanup()
 
@@ -796,7 +758,7 @@ func run(devicePath string, configPath string, composeDelay time.Duration, grab 
 		}
 	}()
 
-	log.Printf("altremap started on %s", devicePath)
+	log.Printf("kmap started on %s", devicePath)
 	if grab {
 		log.Printf("input device is grabbed")
 	}
@@ -841,6 +803,6 @@ func run(devicePath string, configPath string, composeDelay time.Duration, grab 
 
 func main() {
 	if err := runCLI(os.Args[1:]); err != nil {
-		log.Fatalf("altremap failed: %v", err)
+		log.Fatalf("kmap failed: %v", err)
 	}
 }

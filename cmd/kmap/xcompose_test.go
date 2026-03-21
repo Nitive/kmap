@@ -36,7 +36,8 @@ func TestBuildXComposeContentUsesScopedHeader(t *testing.T) {
 
 func TestGenerateXComposeFileWritesExpectedEntries(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "XCompose")
-	if err := generateXComposeFile("", outPath); err != nil {
+	configPath := filepath.Join("..", "..", "kmap.yaml")
+	if err := generateXComposeFile(configPath, outPath); err != nil {
 		t.Fatalf("generateXComposeFile: %v", err)
 	}
 

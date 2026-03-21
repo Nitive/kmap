@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"testing"
 	"time"
@@ -83,18 +84,37 @@ func chordExpectedEvents(mods []uint16, key uint16) []emittedKey {
 	return events
 }
 
-func sortedSymbolKeys() []uint16 {
-	keys := make([]uint16, 0, len(symbolMap))
-	for k := range symbolMap {
+func loadRepoRuntimeConfig(t *testing.T) runtimeConfig {
+	t.Helper()
+	path := filepath.Join("..", "..", "kmap.yaml")
+	cfg, err := loadRuntimeConfig(path)
+	if err != nil {
+		t.Fatalf("loadRuntimeConfig(%s): %v", path, err)
+	}
+	return cfg
+}
+
+func newConfiguredRemapper(t *testing.T, out keyEmitter) *remapper {
+	t.Helper()
+	cfg := loadRepoRuntimeConfig(t)
+	return newRemapperWithConfig(out, 0, false, cfg)
+}
+
+func sortedSymbolKeys(cfg runtimeConfig) []uint16 {
+	keys := make([]uint16, 0, len(cfg.altMappings))
+	for k, mapping := range cfg.altMappings {
+		if mapping.kind != mappingSymbol {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	return keys
 }
 
-func sortedCapsKeys() []uint16 {
-	keys := make([]uint16, 0, len(capsActionMap))
-	for k := range capsActionMap {
+func sortedCapsKeys(cfg runtimeConfig) []uint16 {
+	keys := make([]uint16, 0, len(cfg.capsMappings))
+	for k := range cfg.capsMappings {
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
@@ -130,9 +150,53 @@ func TestComposeRuneKeySupportsHexLetters(t *testing.T) {
 	}
 }
 
+func TestReleaseCapsOnStart(t *testing.T) {
+	t.Run("toggles off when caps mappings exist and caps is enabled", func(t *testing.T) {
+		out := &fakeEmitter{}
+		cfg := runtimeConfig{
+			capsMappings: map[uint16]compiledMapping{
+				keyH: {kind: mappingRemap, remapCode: keyBackspace},
+			},
+		}
+
+		if err := releaseCapsOnStart(out, cfg, true, 0); err != nil {
+			t.Fatalf("releaseCapsOnStart: %v", err)
+		}
+
+		want := []emittedKey{event(keyCapsLock, 1), event(keyCapsLock, 0)}
+		assertEventsEqual(t, out.events, want)
+	})
+
+	t.Run("noop without caps mappings", func(t *testing.T) {
+		out := &fakeEmitter{}
+		cfg := runtimeConfig{capsMappings: map[uint16]compiledMapping{}}
+
+		if err := releaseCapsOnStart(out, cfg, true, 0); err != nil {
+			t.Fatalf("releaseCapsOnStart: %v", err)
+		}
+
+		assertEventsEqual(t, out.events, nil)
+	})
+
+	t.Run("noop when caps mappings exist but caps is already disabled", func(t *testing.T) {
+		out := &fakeEmitter{}
+		cfg := runtimeConfig{
+			capsMappings: map[uint16]compiledMapping{
+				keyH: {kind: mappingRemap, remapCode: keyBackspace},
+			},
+		}
+
+		if err := releaseCapsOnStart(out, cfg, false, 0); err != nil {
+			t.Fatalf("releaseCapsOnStart: %v", err)
+		}
+
+		assertEventsEqual(t, out.events, nil)
+	})
+}
+
 func TestAltSymbolDoesNotEmitAlt(t *testing.T) {
 	out := &fakeEmitter{}
-	r := newRemapper(out, 0, false)
+	r := newConfiguredRemapper(t, out)
 
 	runSequence(t, r, []emittedKey{
 		event(keyLeftAlt, 1),
@@ -148,7 +212,7 @@ func TestAltSymbolDoesNotEmitAlt(t *testing.T) {
 
 func TestAltTabHeldAcrossMultipleTabs(t *testing.T) {
 	out := &fakeEmitter{}
-	r := newRemapper(out, 0, false)
+	r := newConfiguredRemapper(t, out)
 
 	runSequence(t, r, []emittedKey{
 		event(keyLeftAlt, 1),
@@ -172,7 +236,7 @@ func TestAltTabHeldAcrossMultipleTabs(t *testing.T) {
 
 func TestAltSymbolWithShiftBecomesPassthrough(t *testing.T) {
 	out := &fakeEmitter{}
-	r := newRemapper(out, 0, false)
+	r := newConfiguredRemapper(t, out)
 
 	runSequence(t, r, []emittedKey{
 		event(keyLeftShift, 1),
@@ -196,7 +260,7 @@ func TestAltSymbolWithShiftBecomesPassthrough(t *testing.T) {
 
 func TestCapsArrowAndBackspaceRemaps(t *testing.T) {
 	out := &fakeEmitter{}
-	r := newRemapper(out, 0, false)
+	r := newConfiguredRemapper(t, out)
 
 	runSequence(t, r, []emittedKey{
 		event(keyCapsLock, 1),
@@ -218,7 +282,7 @@ func TestCapsArrowAndBackspaceRemaps(t *testing.T) {
 
 func TestCapsChordShortcut(t *testing.T) {
 	out := &fakeEmitter{}
-	r := newRemapper(out, 0, false)
+	r := newConfiguredRemapper(t, out)
 
 	runSequence(t, r, []emittedKey{
 		event(keyCapsLock, 1),
@@ -244,7 +308,7 @@ func TestCapsChordShortcut(t *testing.T) {
 
 func TestCleanupReleasesEmittedAlt(t *testing.T) {
 	out := &fakeEmitter{}
-	r := newRemapper(out, 0, false)
+	r := newConfiguredRemapper(t, out)
 
 	runSequence(t, r, []emittedKey{
 		event(keyLeftAlt, 1),
@@ -265,7 +329,7 @@ func TestCleanupReleasesEmittedAlt(t *testing.T) {
 
 func TestCleanupNoAltWhenNeverEmitted(t *testing.T) {
 	out := &fakeEmitter{}
-	r := newRemapper(out, 0, false)
+	r := newConfiguredRemapper(t, out)
 
 	runSequence(t, r, []emittedKey{
 		event(keyLeftAlt, 1),
@@ -284,12 +348,13 @@ func TestCleanupNoAltWhenNeverEmitted(t *testing.T) {
 }
 
 func TestAltAllSymbolMappings(t *testing.T) {
-	for _, k := range sortedSymbolKeys() {
+	cfg := loadRepoRuntimeConfig(t)
+	for _, k := range sortedSymbolKeys(cfg) {
 		keyCode := k
-		action := symbolMap[keyCode]
+		action := cfg.altMappings[keyCode].symbol
 		t.Run(fmt.Sprintf("key_%d", keyCode), func(t *testing.T) {
 			out := &fakeEmitter{}
-			r := newRemapper(out, 0, false)
+			r := newConfiguredRemapper(t, out)
 
 			runSequence(t, r, []emittedKey{
 				event(keyLeftAlt, 1),
@@ -309,12 +374,13 @@ func TestAltAllSymbolMappings(t *testing.T) {
 }
 
 func TestCapsAllMappings(t *testing.T) {
-	for _, k := range sortedCapsKeys() {
+	cfg := loadRepoRuntimeConfig(t)
+	for _, k := range sortedCapsKeys(cfg) {
 		keyCode := k
-		action := capsActionMap[keyCode]
+		action := cfg.capsMappings[keyCode]
 		t.Run(fmt.Sprintf("key_%d", keyCode), func(t *testing.T) {
 			out := &fakeEmitter{}
-			r := newRemapper(out, 0, false)
+			r := newConfiguredRemapper(t, out)
 
 			runSequence(t, r, []emittedKey{
 				event(keyCapsLock, 1),
@@ -324,13 +390,15 @@ func TestCapsAllMappings(t *testing.T) {
 			})
 
 			var want []emittedKey
-			if action.remapCode != 0 {
+			if action.kind == mappingRemap {
 				want = []emittedKey{
 					event(action.remapCode, 1),
 					event(action.remapCode, 0),
 				}
-			} else {
+			} else if action.kind == mappingChord {
 				want = chordExpectedEvents(action.chordMods, action.chordKey)
+			} else {
+				t.Fatalf("unexpected caps mapping kind: %d", action.kind)
 			}
 
 			assertEventsEqual(t, out.events, want)

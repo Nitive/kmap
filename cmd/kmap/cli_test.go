@@ -8,10 +8,10 @@ import (
 
 func TestRunCLIDispatchesSetupKeymapSubcommand(t *testing.T) {
 	origSetup := runSetupKeymapFn
-	origRemap := runRemapFn
+	origStart := runStartFn
 	defer func() {
 		runSetupKeymapFn = origSetup
-		runRemapFn = origRemap
+		runStartFn = origStart
 	}()
 
 	var called bool
@@ -21,8 +21,8 @@ func TestRunCLIDispatchesSetupKeymapSubcommand(t *testing.T) {
 		gotArgs = append([]string(nil), args...)
 		return nil
 	}
-	runRemapFn = func(string, string, time.Duration, bool, bool) error {
-		t.Fatalf("runRemapFn should not be called for setup-keymap subcommand")
+	runStartFn = func(string, string, time.Duration, bool, bool) error {
+		t.Fatalf("runStartFn should not be called for setup-keymap subcommand")
 		return nil
 	}
 
@@ -37,22 +37,22 @@ func TestRunCLIDispatchesSetupKeymapSubcommand(t *testing.T) {
 	}
 }
 
-func TestRunCLIDefaultsToRemapper(t *testing.T) {
+func TestRunCLIDispatchesStartSubcommand(t *testing.T) {
 	origSetup := runSetupKeymapFn
-	origRemap := runRemapFn
+	origStart := runStartFn
 	origGenerate := generateXComposeFn
 	defer func() {
 		runSetupKeymapFn = origSetup
-		runRemapFn = origRemap
+		runStartFn = origStart
 		generateXComposeFn = origGenerate
 	}()
 
 	runSetupKeymapFn = func(args []string) error {
-		t.Fatalf("runSetupKeymapFn should not be called for default CLI mode")
+		t.Fatalf("runSetupKeymapFn should not be called for start")
 		return nil
 	}
 	generateXComposeFn = func(configPath string, outputPath string) error {
-		t.Fatalf("generateXComposeFn should not be called for default CLI mode")
+		t.Fatalf("generateXComposeFn should not be called for start")
 		return nil
 	}
 
@@ -64,7 +64,7 @@ func TestRunCLIDefaultsToRemapper(t *testing.T) {
 		gotVerbose bool
 		called     bool
 	)
-	runRemapFn = func(device, config string, delay time.Duration, grab, verbose bool) error {
+	runStartFn = func(device, config string, delay time.Duration, grab, verbose bool) error {
 		called = true
 		gotDevice = device
 		gotConfig = config
@@ -75,6 +75,7 @@ func TestRunCLIDefaultsToRemapper(t *testing.T) {
 	}
 
 	err := runCLI([]string{
+		"start",
 		"--device", "/dev/input/test-kbd",
 		"--config", "custom.yaml",
 		"--compose-delay", "1ms",
@@ -85,7 +86,7 @@ func TestRunCLIDefaultsToRemapper(t *testing.T) {
 		t.Fatalf("runCLI: %v", err)
 	}
 	if !called {
-		t.Fatalf("runRemapFn was not called")
+		t.Fatalf("runStartFn was not called")
 	}
 	if gotDevice != "/dev/input/test-kbd" {
 		t.Fatalf("device mismatch: %q", gotDevice)
@@ -104,8 +105,8 @@ func TestRunCLIDefaultsToRemapper(t *testing.T) {
 	}
 }
 
-func TestRunRemapCommandRejectsNegativeComposeDelay(t *testing.T) {
-	err := runRemapCommand([]string{"--compose-delay", "-1ms"})
+func TestRunStartCommandRejectsNegativeComposeDelay(t *testing.T) {
+	err := runStartCommand([]string{"--compose-delay", "-1ms"})
 	if err == nil {
 		t.Fatalf("expected error for negative compose delay")
 	}
@@ -116,11 +117,11 @@ func TestRunRemapCommandRejectsNegativeComposeDelay(t *testing.T) {
 
 func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
 	origSetup := runSetupKeymapFn
-	origRemap := runRemapFn
+	origStart := runStartFn
 	origGenerate := generateXComposeFn
 	defer func() {
 		runSetupKeymapFn = origSetup
-		runRemapFn = origRemap
+		runStartFn = origStart
 		generateXComposeFn = origGenerate
 	}()
 
@@ -128,8 +129,8 @@ func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
 		t.Fatalf("runSetupKeymapFn should not be called for generate-xcompose")
 		return nil
 	}
-	runRemapFn = func(string, string, time.Duration, bool, bool) error {
-		t.Fatalf("runRemapFn should not be called for generate-xcompose")
+	runStartFn = func(string, string, time.Duration, bool, bool) error {
+		t.Fatalf("runStartFn should not be called for generate-xcompose")
 		return nil
 	}
 
@@ -146,8 +147,9 @@ func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
 	}
 
 	err := runCLI([]string{
-		"--config", "altremap.yaml",
-		"--generate-xcompose", "/tmp/generated.XCompose",
+		"generate-xcompose",
+		"--config", "kmap.yaml",
+		"--output", "/tmp/generated.XCompose",
 	})
 	if err != nil {
 		t.Fatalf("runCLI: %v", err)
@@ -155,10 +157,63 @@ func TestRunCLIGeneratesXComposeAndExits(t *testing.T) {
 	if !called {
 		t.Fatalf("generateXComposeFn was not called")
 	}
-	if gotConfig != "altremap.yaml" {
+	if gotConfig != "kmap.yaml" {
 		t.Fatalf("config mismatch: %q", gotConfig)
 	}
 	if gotOutput != "/tmp/generated.XCompose" {
 		t.Fatalf("output mismatch: %q", gotOutput)
+	}
+}
+
+func TestRunGenerateXComposeSupportsPositionalOutput(t *testing.T) {
+	origGenerate := generateXComposeFn
+	defer func() {
+		generateXComposeFn = origGenerate
+	}()
+
+	var (
+		called    bool
+		gotConfig string
+		gotOutput string
+	)
+	generateXComposeFn = func(configPath string, outputPath string) error {
+		called = true
+		gotConfig = configPath
+		gotOutput = outputPath
+		return nil
+	}
+
+	err := runGenerateXComposeCommand([]string{"/tmp/generated.XCompose"})
+	if err != nil {
+		t.Fatalf("runGenerateXComposeCommand: %v", err)
+	}
+	if !called {
+		t.Fatalf("generateXComposeFn was not called")
+	}
+	if gotConfig != "kmap.yaml" {
+		t.Fatalf("default config mismatch: %q", gotConfig)
+	}
+	if gotOutput != "/tmp/generated.XCompose" {
+		t.Fatalf("output mismatch: %q", gotOutput)
+	}
+}
+
+func TestRunCLIRequiresCommand(t *testing.T) {
+	err := runCLI(nil)
+	if err == nil {
+		t.Fatalf("expected error for missing command")
+	}
+	if !strings.Contains(err.Error(), "missing command") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunCLIUnknownCommand(t *testing.T) {
+	err := runCLI([]string{"unknown"})
+	if err == nil {
+		t.Fatalf("expected error for unknown command")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

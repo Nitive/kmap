@@ -165,8 +165,8 @@ func TestLoadRuntimeConfigMissingFileUsesDefaults(t *testing.T) {
 	}
 }
 
-func TestRepositoryAltremapConfigLoads(t *testing.T) {
-	path := filepath.Join("..", "..", "altremap.yaml")
+func TestRepositoryKMapConfigLoads(t *testing.T) {
+	path := filepath.Join("..", "..", "kmap.yaml")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}
