@@ -1,0 +1,12 @@
+[Service]
+WorkingDirectory=/
+ExecStart=/home/nitive/Develop/keyboard/kmonad-start.sh
+Restart=always
+RestartSec=3
+Nice=-20
+User=root
+Environment="KEYBOARD_DEVICE=/dev/input/by-id/usb-04d9_USB-HID_Keyboard-event-kbd"
+
+[Install]
+DefaultInstance=config
+WantedBy=multi-user.target

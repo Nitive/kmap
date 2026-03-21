@@ -1,0 +1,12 @@
+[Service]
+WorkingDirectory=/
+ExecStart=/home/nitive/Develop/keyboard/kmonad-start.sh
+Restart=always
+RestartSec=3
+Nice=-20
+User=root
+Environment="KEYBOARD_DEVICE=/dev/input/by-path/platform-i8042-serio-0-event-kbd"
+
+[Install]
+DefaultInstance=config
+WantedBy=multi-user.target
