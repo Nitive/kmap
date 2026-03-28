@@ -19,31 +19,57 @@ type switchRunner struct {
 
 func (r *switchRunner) run(ctx context.Context, name string, args ...string) (string, error) {
 	_ = ctx
-	if name != "qdbus6" {
-		return "", fmt.Errorf("unexpected command %q", name)
-	}
-	if len(args) < 3 {
-		return "", fmt.Errorf("unexpected args: %#v", args)
-	}
-
-	switch args[2] {
-	case "org.kde.KeyboardLayouts.getLayout":
-		return fmt.Sprintf("%d\n", r.current), nil
-
-	case "org.kde.KeyboardLayouts.setLayout":
-		if len(args) != 4 {
-			return "", fmt.Errorf("unexpected setLayout args: %#v", args)
+	switch name {
+	case "busctl":
+		if len(args) < 6 {
+			return "", fmt.Errorf("unexpected args: %#v", args)
 		}
-		index, err := strconv.Atoi(args[3])
-		if err != nil {
-			return "", err
+		switch args[5] {
+		case "getLayout":
+			return fmt.Sprintf("u %d\n", r.current), nil
+
+		case "setLayout":
+			if len(args) != 8 || args[6] != "u" {
+				return "", fmt.Errorf("unexpected setLayout args: %#v", args)
+			}
+			index, err := strconv.Atoi(args[7])
+			if err != nil {
+				return "", err
+			}
+			r.current = index
+			r.setCalls = append(r.setCalls, index)
+			return "b true\n", nil
+
+		default:
+			return "", fmt.Errorf("unexpected method %q", args[5])
 		}
-		r.current = index
-		r.setCalls = append(r.setCalls, index)
-		return "true\n", nil
+
+	case "qdbus6":
+		if len(args) < 3 {
+			return "", fmt.Errorf("unexpected args: %#v", args)
+		}
+		switch args[2] {
+		case "org.kde.KeyboardLayouts.getLayout":
+			return fmt.Sprintf("%d\n", r.current), nil
+
+		case "org.kde.KeyboardLayouts.setLayout":
+			if len(args) != 4 {
+				return "", fmt.Errorf("unexpected setLayout args: %#v", args)
+			}
+			index, err := strconv.Atoi(args[3])
+			if err != nil {
+				return "", err
+			}
+			r.current = index
+			r.setCalls = append(r.setCalls, index)
+			return "true\n", nil
+
+		default:
+			return "", fmt.Errorf("unexpected method %q", args[2])
+		}
 
 	default:
-		return "", fmt.Errorf("unexpected method %q", args[2])
+		return "", fmt.Errorf("unexpected command %q", name)
 	}
 }
 

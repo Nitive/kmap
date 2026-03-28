@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -25,13 +26,25 @@ func (f fakeRunner) run(ctx context.Context, name string, args ...string) (strin
 }
 
 func TestParseCurrentLayoutIndex(t *testing.T) {
-	got, err := parseCurrentLayoutIndex(" 1 \n")
-	if err != nil {
-		t.Fatalf("parseCurrentLayoutIndex: %v", err)
-	}
-	if got != 1 {
-		t.Fatalf("unexpected index: got=%d want=1", got)
-	}
+	t.Run("qdbus output", func(t *testing.T) {
+		got, err := parseCurrentLayoutIndex(" 1 \n")
+		if err != nil {
+			t.Fatalf("parseCurrentLayoutIndex: %v", err)
+		}
+		if got != 1 {
+			t.Fatalf("unexpected index: got=%d want=1", got)
+		}
+	})
+
+	t.Run("busctl output", func(t *testing.T) {
+		got, err := parseCurrentLayoutIndex("u 1\n")
+		if err != nil {
+			t.Fatalf("parseCurrentLayoutIndex: %v", err)
+		}
+		if got != 1 {
+			t.Fatalf("unexpected index: got=%d want=1", got)
+		}
+	})
 }
 
 func TestLoaderCurrentKDELayout(t *testing.T) {
@@ -46,7 +59,35 @@ VariantList=dvorak,
 
 	loader := NewLoaderWithRunner(fakeRunner{
 		outputs: map[string]string{
+			"busctl|[--user call org.kde.keyboard /Layouts org.kde.KeyboardLayouts getLayout]": "u 1\n",
+		},
+	})
+
+	got, err := loader.currentKDELayout(context.Background())
+	if err != nil {
+		t.Fatalf("currentKDELayout: %v", err)
+	}
+	if got.Layout != "ru" || got.Variant != "" || got.Description != "ru" {
+		t.Fatalf("unexpected layout info: %#v", got)
+	}
+}
+
+func TestLoaderCurrentKDELayoutFallsBackToQDBusWhenBusctlMissing(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configDir)
+	if err := os.WriteFile(filepath.Join(configDir, "kxkbrc"), []byte(`[Layout]
+LayoutList=us,ru
+VariantList=dvorak,
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	loader := NewLoaderWithRunner(fakeRunner{
+		outputs: map[string]string{
 			"qdbus6|[org.kde.keyboard /Layouts org.kde.KeyboardLayouts.getLayout]": "1\n",
+		},
+		errs: map[string]error{
+			"busctl|[--user call org.kde.keyboard /Layouts org.kde.KeyboardLayouts getLayout]": exec.ErrNotFound,
 		},
 	})
 
@@ -88,7 +129,7 @@ func TestProviderCurrentRemapUsesActiveLayout(t *testing.T) {
 	provider := &Provider{
 		loader: NewLoaderWithRunner(fakeRunner{
 			outputs: map[string]string{
-				"qdbus6|[org.kde.keyboard /Layouts org.kde.KeyboardLayouts.getLayout]": "1\n",
+				"busctl|[--user call org.kde.keyboard /Layouts org.kde.KeyboardLayouts getLayout]": "u 1\n",
 			},
 		}),
 		layouts: []LayoutInfo{

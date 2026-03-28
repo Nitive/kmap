@@ -2,6 +2,7 @@ package shortcut
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,12 @@ import (
 )
 
 const xkbKeycodeOffset = 8
+
+const (
+	kdeKeyboardService   = "org.kde.keyboard"
+	kdeKeyboardPath      = "/Layouts"
+	kdeKeyboardInterface = "org.kde.KeyboardLayouts"
+)
 
 var shortcutCandidateCodes = []uint16{
 	config.KeyGrv,
@@ -125,7 +132,7 @@ func (l Loader) currentKDELayout(ctx context.Context) (LayoutInfo, error) {
 }
 
 func (l Loader) currentKDELayoutFromList(ctx context.Context, layouts []LayoutInfo) (LayoutInfo, error) {
-	indexOut, err := l.runner.run(ctx, "qdbus6", "org.kde.keyboard", "/Layouts", "org.kde.KeyboardLayouts.getLayout")
+	indexOut, err := l.runKDELayoutMethod(ctx, "getLayout")
 	if err != nil {
 		return LayoutInfo{}, fmt.Errorf("query KDE active layout index: %w", err)
 	}
@@ -138,6 +145,34 @@ func (l Loader) currentKDELayoutFromList(ctx context.Context, layouts []LayoutIn
 	}
 
 	return layouts[index], nil
+}
+
+func (l Loader) runKDELayoutMethod(ctx context.Context, method string, args ...string) (string, error) {
+	busctlArgs := []string{
+		"--user",
+		"call",
+		kdeKeyboardService,
+		kdeKeyboardPath,
+		kdeKeyboardInterface,
+		method,
+	}
+	busctlArgs = append(busctlArgs, args...)
+
+	out, err := l.runner.run(ctx, "busctl", busctlArgs...)
+	if err == nil {
+		return out, nil
+	}
+	if !errors.Is(err, exec.ErrNotFound) {
+		return "", err
+	}
+
+	qdbusArgs := []string{
+		kdeKeyboardService,
+		kdeKeyboardPath,
+		kdeKeyboardInterface + "." + method,
+	}
+	qdbusArgs = append(qdbusArgs, args...)
+	return l.runner.run(ctx, "qdbus6", qdbusArgs...)
 }
 
 func NewProvider(ctx context.Context, target config.ShortcutLayoutSpec) (*Provider, map[uint16]uint16, LayoutInfo, error) {
@@ -258,9 +293,9 @@ func isRemappableRune(ch rune) bool {
 }
 
 func parseCurrentLayoutIndex(raw string) (int, error) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := trimKDEScalarOutput(raw)
 	if trimmed == "" {
-		return 0, fmt.Errorf("empty qdbus output")
+		return 0, fmt.Errorf("empty KDE layout output")
 	}
 
 	idx, err := strconv.Atoi(trimmed)
@@ -268,6 +303,24 @@ func parseCurrentLayoutIndex(raw string) (int, error) {
 		return 0, fmt.Errorf("invalid layout index %q", trimmed)
 	}
 	return idx, nil
+}
+
+func trimKDEScalarOutput(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	fields := strings.Fields(trimmed)
+	if len(fields) == 2 && isBusctlScalarType(fields[0]) {
+		return fields[1]
+	}
+	return trimmed
+}
+
+func isBusctlScalarType(token string) bool {
+	switch token {
+	case "b", "n", "q", "i", "u", "x", "t", "y":
+		return true
+	default:
+		return false
+	}
 }
 
 func readConfiguredKDELayouts() ([]LayoutInfo, error) {

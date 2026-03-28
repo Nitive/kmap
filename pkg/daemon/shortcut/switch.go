@@ -6,7 +6,6 @@ import (
 	"log"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -384,7 +383,7 @@ func (m *SwitchManager) logf(format string, args ...any) {
 }
 
 func (l Loader) currentKDELayoutIndex(ctx context.Context) (int, error) {
-	indexOut, err := l.runner.run(ctx, "qdbus6", "org.kde.keyboard", "/Layouts", "org.kde.KeyboardLayouts.getLayout")
+	indexOut, err := l.runKDELayoutMethod(ctx, "getLayout")
 	if err != nil {
 		return 0, fmt.Errorf("query KDE active layout index: %w", err)
 	}
@@ -396,19 +395,12 @@ func (l Loader) currentKDELayoutIndex(ctx context.Context) (int, error) {
 }
 
 func (l Loader) setKDELayoutIndex(ctx context.Context, index int) error {
-	out, err := l.runner.run(
-		ctx,
-		"qdbus6",
-		"org.kde.keyboard",
-		"/Layouts",
-		"org.kde.KeyboardLayouts.setLayout",
-		strconv.Itoa(index),
-	)
+	out, err := l.runKDELayoutMethod(ctx, "setLayout", "u", strconv.Itoa(index))
 	if err != nil {
 		return fmt.Errorf("set KDE layout index %d: %w", index, err)
 	}
 
-	trimmed := strings.TrimSpace(out)
+	trimmed := trimKDEScalarOutput(out)
 	if trimmed == "" {
 		return nil
 	}
