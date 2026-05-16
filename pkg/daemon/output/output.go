@@ -25,7 +25,7 @@ const (
 )
 
 const (
-	busUSB = 0x03
+	busI8042 = 0x11
 )
 
 // ioctl definitions from asm-generic/ioctl.h
@@ -132,7 +132,7 @@ func createVirtualKeyboardWithFile(file io.WriteCloser, fd int, name string, ic 
 	var dev uinputUserDev
 	copy(dev.Name[:], []byte(name))
 	dev.ID = inputID{
-		Bustype: busUSB,
+		Bustype: busI8042,
 		Vendor:  0x1,
 		Product: 0x1,
 		Version: 1,
